@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 func atoi(s string) int {
@@ -116,4 +117,59 @@ func readAppMemoryCsvFile(filename string) []appMemory {
 	}
 
 	return appMemoryUsages
+}
+
+func readFunctionDurationCsvFile(filename string) []functionExecutionDuration {
+	var functionDurations []functionExecutionDuration
+
+	//Open the file
+	f, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	//When the function ends close the file
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(f)
+
+	//Read csv file line by line
+	csvReader := csv.NewReader(f)
+	isFirstLine := true
+	for {
+		var element functionExecutionDuration
+		rec, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		if isFirstLine {
+			isFirstLine = false
+			continue
+		}
+		//Create the object
+		element.owner = rec[0]
+		element.app = rec[1]
+		element.function = rec[2]
+		element.average = atoi(rec[3])
+		element.count = atoi(rec[4])
+		element.minimum = atoi(strings.Split(rec[5], ".")[0])
+		element.maximum = atoi(strings.Split(rec[6], ".")[0])
+		element.percentileAverage0 = atoi(rec[7])
+		element.percentileAverage1 = atoi(rec[8])
+		element.percentileAverage25 = atoi(rec[9])
+		element.percentileAverage50 = atoi(rec[10])
+		element.percentileAverage75 = atoi(rec[11])
+		element.percentileAverage99 = atoi(rec[12])
+		element.percentileAverage100 = atoi(rec[13])
+
+		functionDurations = append(functionDurations, element)
+	}
+
+	return functionDurations
 }

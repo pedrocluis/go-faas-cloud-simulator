@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
 )
 
 func main() {
@@ -10,6 +9,7 @@ func main() {
 	fmt.Println(listInvocations[0])
 	listMemory := readAppMemoryCsvFile("dataset/app_memory_percentiles.anon.d01.csv")
 	fmt.Println(listMemory[0])
-	fmt.Println(atoi(strings.Split("107.0", ".")[0]))
+	durationMemory := readFunctionDurationCsvFile("dataset/function_durations_percentiles.anon.d09.csv")
+	fmt.Println(durationMemory[0])
 
 }
