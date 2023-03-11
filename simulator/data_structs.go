@@ -6,6 +6,8 @@ type functionInvocationCount struct {
 	function  string
 	trigger   string
 	perMinute [1441]int
+	duration  int
+	memory    int
 }
 
 type functionExecutionDuration struct {

@@ -2,7 +2,7 @@ package main
 
 import "golang.org/x/exp/slices"
 
-const KEEP_ALIVE_WINDOW = 10
+const KEEP_ALIVE_WINDOW = 5
 
 type Node struct {
 	memory                   int
@@ -26,6 +26,9 @@ func newNode(memory int) Node {
 func allocateMemory(node Node, app string, minute int, memory int, duration int, coldStarts *int) {
 
 	for i := minute; i < minute+duration+KEEP_ALIVE_WINDOW; i++ {
+		if i > 1440 {
+			break
+		}
 		if !slices.Contains(node.appsInMemoryPerMinute[i], app) {
 			// At the minute the function is called, if it's not in memory, it's a cold start
 			if i == minute {
