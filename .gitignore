@@ -1,4 +1,4 @@
 .idea/*
-dataset/*
+dataset/*.csv
 simulator/simulator
 sim
