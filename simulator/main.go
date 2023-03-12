@@ -40,8 +40,8 @@ func main() {
 	invocations := 0
 
 	n := newNode(1000000000000000000)
-	for i := range listInvocations {
-		//for i := 0; i < 10000; i++ {
+	//for i := range listInvocations {
+	for i := 0; i < 10000; i++ {
 
 		if i%2500 == 0 {
 			fmt.Printf("%d\n", i)
@@ -61,5 +61,5 @@ func main() {
 
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocations)
-	fmt.Printf("Cold Starts: %d\n", coldStarts)
+	//fmt.Printf("Cold Starts: %d\n", coldStarts)
 }

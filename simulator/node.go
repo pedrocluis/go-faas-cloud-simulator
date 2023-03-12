@@ -30,12 +30,22 @@ func allocateMemory(node Node, app string, minute int, memory int, duration int,
 			break
 		}
 		if !slices.Contains(node.appsInMemoryPerMinute[i], app) {
-			// At the minute the function is called, if it's not in memory, it's a cold start
-			if i == minute {
-				*coldStarts++
-			}
+			// At the minute the function is called, if it's not in memory, allocate the memory
 			node.availableMemoryPerMinute[i] -= memory
 			node.appsInMemoryPerMinute[i] = append(node.appsInMemoryPerMinute[i], app)
 		}
 	}
+}
+
+func countColdStarts(n Node) int {
+	coldStarts := 0
+	for i := 1; i <= 1440; i++ {
+		for j := range n.appsInMemoryPerMinute[i] {
+			if slices.Contains(n.appsInMemoryPerMinute[i-1], n.appsInMemoryPerMinute[i][j]) {
+				continue
+			}
+			coldStarts++
+		}
+	}
+	return coldStarts
 }
