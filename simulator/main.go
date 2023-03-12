@@ -1,15 +1,13 @@
 package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
 func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
 	for i := range functionInvocations {
-		functionInvocations[i].duration = -1
+		functionInvocations[i].avgDuration = -1
 		for j := range durations {
 			if functionInvocations[i].function == durations[j].function {
-				functionInvocations[i].duration = durations[j].average / 1000 / 60 // Convert duration from ms to minute
+				functionInvocations[i].avgDuration = durations[j].average / 1000 / 60 // Convert duration from ms to minute
 				break
 			}
 		}
@@ -19,10 +17,10 @@ func addDurations(functionInvocations []functionInvocationCount, durations []fun
 
 func addMemories(functionInvocations []functionInvocationCount, memoryUsages []appMemory) []functionInvocationCount {
 	for i := range functionInvocations {
-		functionInvocations[i].memory = -1
+		functionInvocations[i].avgMemory = -1
 		for j := range memoryUsages {
 			if functionInvocations[i].app == memoryUsages[j].app {
-				functionInvocations[i].memory = memoryUsages[j].average
+				functionInvocations[i].avgMemory = memoryUsages[j].average
 				break
 			}
 		}
@@ -42,47 +40,26 @@ func main() {
 	invocations := 0
 
 	n := newNode(1000000000000000000)
-	//for i := range listInvocations {
-	for i := 0; i < 10000; i++ {
+	for i := range listInvocations {
+		//for i := 0; i < 10000; i++ {
 
-		if i%5000 == 0 {
+		if i%2500 == 0 {
 			fmt.Printf("%d\n", i)
 		}
 
-		if listInvocations[i].memory == -1 || listInvocations[i].duration == -1 {
+		if listInvocations[i].avgMemory == -1 || listInvocations[i].avgDuration == -1 {
 			continue
 		}
-		/*memory := -1
-		duration := -1
-		for j := range listMemory {
-			if listInvocations[i].app == listMemory[j].app {
-				memory = listMemory[j].average
-				break
-			}
-		}
-		if memory == -1 {
-			continue
-		}
-		for k := range functionDuration {
-			if listInvocations[i].function == functionDuration[k].function {
-				duration = functionDuration[k].average
-				break
-			}
-		}
-		if duration == -1 {
-			continue
-		}
-		// Convert duration from ms to minute
-		duration = duration / 1000 / 60
-		*/
+
 		for l := range listInvocations[i].perMinute {
 			if listInvocations[i].perMinute[l] != 0 {
 				invocations++
-				allocateMemory(n, listInvocations[i].app, l, listInvocations[i].memory, listInvocations[i].duration, &coldStarts)
+				allocateMemory(n, listInvocations[i].app, l, listInvocations[i].avgMemory, listInvocations[i].avgDuration, &coldStarts)
 			}
 		}
 	}
 
+	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocations)
 	fmt.Printf("Cold Starts: %d\n", coldStarts)
 }

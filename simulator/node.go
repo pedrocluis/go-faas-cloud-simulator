@@ -2,7 +2,7 @@ package main
 
 import "golang.org/x/exp/slices"
 
-const KEEP_ALIVE_WINDOW = 5
+const KEEP_ALIVE_WINDOW = 10
 
 type Node struct {
 	memory                   int
@@ -25,7 +25,7 @@ func newNode(memory int) Node {
 
 func allocateMemory(node Node, app string, minute int, memory int, duration int, coldStarts *int) {
 
-	for i := minute; i < minute+duration+KEEP_ALIVE_WINDOW; i++ {
+	for i := minute; i <= minute+duration+KEEP_ALIVE_WINDOW; i++ {
 		if i > 1440 {
 			break
 		}
