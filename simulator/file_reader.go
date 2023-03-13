@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+// Atoi function with error checking
 func atoi(s string) int {
 	ret, err := strconv.Atoi(s)
 	if err != nil {
@@ -17,6 +18,7 @@ func atoi(s string) int {
 	return ret
 }
 
+// Read datasets about the invocation count and create an array of functionInvocationCount structs
 func readInvocationCsvFile(filename string) []functionInvocationCount {
 
 	var functionInvocationCounts []functionInvocationCount
@@ -66,6 +68,7 @@ func readInvocationCsvFile(filename string) []functionInvocationCount {
 
 }
 
+// Read datasets about the app memory usage and create an array of appMemory structs
 func readAppMemoryCsvFile(filename string) []appMemory {
 	var appMemoryUsages []appMemory
 
@@ -119,6 +122,7 @@ func readAppMemoryCsvFile(filename string) []appMemory {
 	return appMemoryUsages
 }
 
+// Read datasets about the function duration count and create an array of functionExecutionDuration structs
 func readFunctionDurationCsvFile(filename string) []functionExecutionDuration {
 	var functionDurations []functionExecutionDuration
 

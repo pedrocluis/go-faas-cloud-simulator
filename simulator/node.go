@@ -2,7 +2,7 @@ package main
 
 import "golang.org/x/exp/slices"
 
-const KEEP_ALIVE_WINDOW = 10
+const KEEP_ALIVE_WINDOW = 0
 
 type Node struct {
 	memory                   int
@@ -10,6 +10,7 @@ type Node struct {
 	appsInMemoryPerMinute    [][]string
 }
 
+// Create a node with a memory capacity
 func newNode(memory int) Node {
 	var n Node
 	n.memory = memory
@@ -23,7 +24,8 @@ func newNode(memory int) Node {
 	return n
 }
 
-func allocateMemory(node Node, app string, minute int, memory int, duration int, coldStarts *int) {
+// Allocate memory for an app for each minute one of its functions is being used and for the keep-alive
+func allocateMemory(node *Node, app string, minute int, memory int, duration int) {
 
 	for i := minute; i <= minute+duration+KEEP_ALIVE_WINDOW; i++ {
 		if i > 1440 {
