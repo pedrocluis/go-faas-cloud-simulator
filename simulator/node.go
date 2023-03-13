@@ -2,7 +2,7 @@ package main
 
 import "golang.org/x/exp/slices"
 
-const KEEP_ALIVE_WINDOW = 0
+const KEEP_ALIVE_WINDOW = 5
 
 type Node struct {
 	memory                   int
