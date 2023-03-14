@@ -116,7 +116,7 @@ func main() {
 	//Wait for the threads to finish
 	wg.Wait()
 	timeElapsed := time.Since(timeStart)
-	fmt.Printf("The simulation took %s", timeElapsed)
+	fmt.Printf("The simulation took %s\n", timeElapsed)
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocations)
 	//fmt.Printf("Cold Starts: %d\n", countColdStarts(n))
