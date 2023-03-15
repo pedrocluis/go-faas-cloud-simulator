@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const N_NODES = 4
+const N_NODES = 8
 
 var functionsDone int
 var progressLock sync.Mutex
@@ -56,7 +56,7 @@ func allocLoop(listInvocations []functionInvocationCount, node Node, start int, 
 			if listInvocations[i].perMinute[l] != 0 {
 				//Lock
 				lock.Lock()
-				*invocations++
+				*invocations += listInvocations[i].perMinute[l]
 				//Unlock
 				lock.Unlock()
 				allocateMemory(&node, listInvocations[i].app, l, listInvocations[i].avgMemory, listInvocations[i].avgDuration)
