@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-const N_NODES = 8
+const N_NODES = 16
+const NODE_MEMORY = 16000
 
 var functionsDone int
 var progressLock sync.Mutex
@@ -39,41 +40,41 @@ func addMemories(functionInvocations []functionInvocationCount, memoryUsages []a
 	return functionInvocations
 }
 
-func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup) {
+func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex) {
 
 	// When the function is done, remove it from the wait group
 	defer wg.Done()
 
-	for i := start; i < end; i++ {
+	// Look at each minute
+	for min := 1; min <= 1440; min++ {
 
-		//If the function doesn't have information about the memory or duration we skip it (don't invoke it)
-		if listInvocations[i].avgMemory == -1 || listInvocations[i].avgDuration == -1 {
-			continue
-		}
+		// Look at the functions for this node
+		for i := start; i < end; i++ {
 
-		//Allocate the memory for each minute
-		for l := range listInvocations[i].perMinute {
-			if listInvocations[i].perMinute[l] != 0 {
-				//Lock
+			//If the function doesn't have information about the memory or duration we skip it (don't invoke it)
+			if listInvocations[i].avgMemory == -1 || listInvocations[i].avgDuration == -1 {
+				continue
+			}
+
+			// Allocate memory for this minute for each invocation
+			for invocationCount := 0; invocationCount < listInvocations[i].perMinute[min]; invocationCount++ {
+				invocation := listInvocations[i]
+				allocateMemory(&node, invocation.app, min, invocation.avgMemory, invocation.avgDuration, coldStarts, coldStartLock)
 				lock.Lock()
-				*invocations += listInvocations[i].perMinute[l]
-				//Unlock
+				*invocations++
 				lock.Unlock()
-				allocateMemory(&node, listInvocations[i].app, l, listInvocations[i].avgMemory, listInvocations[i].avgDuration)
 			}
 		}
 
-		// This is here only to know the progress
-		progressLock.Lock()
-		functionsDone++
-		if functionsDone%5000 == 0 {
-			fmt.Printf("%d\n", functionsDone)
-		}
-		progressLock.Unlock()
 	}
+
 }
 
 func main() {
+
+	//Cold start counter
+	coldStarts := 0
+	var coldStartLock sync.Mutex
 
 	//Measure the execution time
 	timeStart := time.Now()
@@ -108,9 +109,9 @@ func main() {
 	fmt.Printf("Size of the Dataset: %d\n", len(listInvocations))
 	//Create the number of nodes specified and send them to a thread
 	for n := 0; n < N_NODES; n++ {
-		listNodes[n] = newNode(1000000000000000000)
-		fmt.Printf("Node: %d | Start: %d | End: %d\n", n, n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES)
-		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg)
+		listNodes[n] = newNode(NODE_MEMORY)
+		//fmt.Printf("Node: %d | Start: %d | End: %d\n", n, n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES)
+		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock)
 	}
 
 	//Wait for the threads to finish
@@ -119,5 +120,5 @@ func main() {
 	fmt.Printf("The simulation took %s\n", timeElapsed)
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocations)
-	//fmt.Printf("Cold Starts: %d\n", countColdStarts(n))
+	fmt.Printf("Cold Starts: %d\n", coldStarts)
 }
