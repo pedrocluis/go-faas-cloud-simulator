@@ -9,9 +9,6 @@ import (
 const N_NODES = 16
 const NODE_MEMORY = 16000
 
-var functionsDone int
-var progressLock sync.Mutex
-
 // This function adds the average duration of a function to the invocation count structure
 func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
 	for i := range functionInvocations {
@@ -40,7 +37,7 @@ func addMemories(functionInvocations []functionInvocationCount, memoryUsages []a
 	return functionInvocations
 }
 
-func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex) {
+func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
 
 	// When the function is done, remove it from the wait group
 	defer wg.Done()
@@ -59,7 +56,7 @@ func allocLoop(listInvocations []functionInvocationCount, node Node, start int, 
 			// Allocate memory for this minute for each invocation
 			for invocationCount := 0; invocationCount < listInvocations[i].perMinute[min]; invocationCount++ {
 				invocation := listInvocations[i]
-				allocateMemory(&node, invocation.app, min, invocation.avgMemory, invocation.avgDuration, coldStarts, coldStartLock)
+				allocateMemory(&node, invocation.app, min, invocation.avgMemory, invocation.avgDuration, coldStarts, coldStartLock, failedInvocations, failLock)
 				lock.Lock()
 				*invocations++
 				lock.Unlock()
@@ -96,9 +93,8 @@ func main() {
 	// List of nodes
 	var listNodes [N_NODES]Node
 
-	//Initialize the invocation counters
+	//Initialize the invocations counter
 	invocations := 0
-	functionsDone = 0
 
 	// Declare mutex and wait group
 	var lock sync.Mutex
@@ -108,10 +104,13 @@ func main() {
 	wg.Add(N_NODES)
 	fmt.Printf("Size of the Dataset: %d\n", len(listInvocations))
 	//Create the number of nodes specified and send them to a thread
+
+	failedInvocations := 0
+	var failLock sync.Mutex
 	for n := 0; n < N_NODES; n++ {
 		listNodes[n] = newNode(NODE_MEMORY)
 		//fmt.Printf("Node: %d | Start: %d | End: %d\n", n, n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES)
-		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock)
+		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock, &failedInvocations, &failLock)
 	}
 
 	//Wait for the threads to finish
@@ -121,4 +120,5 @@ func main() {
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocations)
 	fmt.Printf("Cold Starts: %d\n", coldStarts)
+	fmt.Printf("Failed Invocations %d\n", failedInvocations)
 }
