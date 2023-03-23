@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-const KEEP_ALIVE_WINDOW = 5 // Keep alive in minutes
-const MINUTES_IN_DAY = 1440 //We add 2000 extra
+const KEEP_ALIVE_WINDOW = 5      // Keep alive in minutes
+const MINUTES_IN_DAY = 1440 + 60 //We add one extra hour
 
 type Node struct {
 	memory                        int
