@@ -117,16 +117,11 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 				// Try to reserve the memory
 				for ms := caughtContainerMs; ms < minToMs(minute)+duration; ms++ {
 					if node.availableMemoryPerMillisecond[ms] < memory {
-						if !unloadMemory(ms, memory, node) {
+						if !unloadMemory(ms, memory, node, app) {
 							caughtContainerMs = -1
 							break
 						}
 					}
-				}
-				//TODO: FIX UNLOADING HIS OWN CONTAINER, THIS IS A TEMPORARY FIX SO IT DOESN'T CRASH
-				_, contains = node.appsInMemory[app]
-				if !contains {
-					caughtContainerMs = -1
 				}
 			}
 		}
@@ -151,7 +146,7 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 		//Check to see if we have available memory
 		for i := minToMs(minute); i < minToMs(minute)+duration; i++ {
 			if node.availableMemoryPerMillisecond[i] < memory {
-				if !unloadMemory(i, memory, node) {
+				if !unloadMemory(i, memory, node, app) {
 					// If we can't unload the necessary memory, do something
 					failLock.Lock()
 					*failedInvocations++
@@ -172,7 +167,7 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 	//Check to see if we can keep the container with the app loaded in a container for the keep-alive window
 	for i := minToMs(minute) + duration; i < minToMs(minute)+duration+minToMs(KEEP_ALIVE_WINDOW); i++ {
 		if node.availableMemoryPerMillisecond[i] < memory {
-			if !unloadMemory(i, memory, node) {
+			if !unloadMemory(i, memory, node, app) {
 				// If there's a millisecond in the keep-alive where we can't find the memory, don't keep the container
 				return
 			}
@@ -196,14 +191,40 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 }
 
 // Search for containers with an app loaded that are not in use
-func unloadMemory(millisecond int, memory int, node *Node) bool {
+func unloadMemory(millisecond int, memory int, node *Node, appName string) bool {
 
 	freedMemory := 0
+	var undoContainer *OrderedContainers = nil
+	sameApp := false
 	for {
+
 		if len(node.orderedContainers) == 0 {
+			if undoContainer != nil {
+				//If we deleted the container we are going to use, put it back
+				node.orderedContainers = undoDeleteOrdered(node.orderedContainers, undoContainer)
+				_, contains := node.appsInMemory[undoContainer.app]
+				if !contains {
+					node.appsInMemory[undoContainer.app] = &ContainersInMemory{memory: memory, containerStartTime: []int{undoContainer.ms}}
+				} else {
+					node.appsInMemory[undoContainer.app].containerStartTime = undoDeleteApp(node.appsInMemory[undoContainer.app].containerStartTime, undoContainer.ms)
+				}
+			}
 			return false
 		}
 		app := node.orderedContainers[0].app
+		// If the container we're looking at is for the app we're trying to make memory for, we'll have to readd it
+		if app == appName {
+			if sameApp == false {
+				undoContainer = node.orderedContainers[0]
+				sameApp = true
+				node.orderedContainers = node.orderedContainers[1:]
+				node.appsInMemory[app].containerStartTime = node.appsInMemory[app].containerStartTime[1:]
+				if len(node.appsInMemory[app].containerStartTime) == 0 {
+					delete(node.appsInMemory, app)
+				}
+				continue
+			}
+		}
 		start := node.orderedContainers[0].ms
 		if start >= millisecond {
 			return false
@@ -218,7 +239,33 @@ func unloadMemory(millisecond int, memory int, node *Node) bool {
 			delete(node.appsInMemory, app)
 		}
 		if freedMemory >= memory {
+			if undoContainer != nil {
+				//If we deleted the container we're going to use, put it back
+				node.orderedContainers = undoDeleteOrdered(node.orderedContainers, undoContainer)
+				_, contains := node.appsInMemory[undoContainer.app]
+				if !contains {
+					node.appsInMemory[undoContainer.app] = &ContainersInMemory{memory: memory, containerStartTime: []int{undoContainer.ms}}
+				} else {
+					node.appsInMemory[undoContainer.app].containerStartTime = undoDeleteApp(node.appsInMemory[undoContainer.app].containerStartTime, undoContainer.ms)
+				}
+			}
 			return true
 		}
 	}
+}
+
+func undoDeleteOrdered(orderedContainers []*OrderedContainers, app *OrderedContainers) []*OrderedContainers {
+	var dummy *OrderedContainers
+	orderedContainers = append(orderedContainers, dummy)
+	copy(orderedContainers[1:], orderedContainers)
+	orderedContainers[0] = app
+	return orderedContainers
+}
+
+func undoDeleteApp(starts []int, undo int) []int {
+	var dummy = 0
+	starts = append(starts, dummy)
+	copy(starts[1:], starts)
+	starts[0] = undo
+	return starts
 }
