@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-const N_NODES = 16
-const NODE_MEMORY = 16000
+const N_NODES = 8
+const NODE_MEMORY = 256000
 
 // This function adds the average duration of a function to the invocation count structure
 func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
@@ -15,7 +15,7 @@ func addDurations(functionInvocations []functionInvocationCount, durations []fun
 		functionInvocations[i].avgDuration = -1
 		for j := range durations {
 			if functionInvocations[i].function == durations[j].function {
-				functionInvocations[i].avgDuration = durations[j].average / 1000 / 60 // Convert duration from ms to minute
+				functionInvocations[i].avgDuration = durations[j].average
 				break
 			}
 		}
@@ -37,19 +37,25 @@ func addMemories(functionInvocations []functionInvocationCount, memoryUsages []a
 	return functionInvocations
 }
 
-func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
+func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex, functionsDone *int, progressLock *sync.Mutex) {
 
 	// When the function is done, remove it from the wait group
 	defer wg.Done()
 
 	// Look at each minute
-	for min := 1; min <= 1440; min++ {
+	for min := 1; min <= 10; min++ {
 
 		// Look at the functions for this node
 		for i := start; i < end; i++ {
 
 			//If the function doesn't have information about the memory or duration we skip it (don't invoke it)
 			if listInvocations[i].avgMemory == -1 || listInvocations[i].avgDuration == -1 {
+				progressLock.Lock()
+				*functionsDone++
+				/*if *functionsDone%500000 == 0 {
+					fmt.Printf("%d functions done\n", *functionsDone)
+				}*/
+				progressLock.Unlock()
 				continue
 			}
 
@@ -61,6 +67,12 @@ func allocLoop(listInvocations []functionInvocationCount, node Node, start int, 
 				*invocations++
 				lock.Unlock()
 			}
+			progressLock.Lock()
+			*functionsDone++
+			/*if *functionsDone%500 == 0 {
+				fmt.Printf("%d functions done\n", *functionsDone)
+			}*/
+			progressLock.Unlock()
 		}
 
 	}
@@ -107,10 +119,14 @@ func main() {
 
 	failedInvocations := 0
 	var failLock sync.Mutex
+
+	functionsDone := 0
+	var progressLock sync.Mutex
+
 	for n := 0; n < N_NODES; n++ {
 		listNodes[n] = newNode(NODE_MEMORY)
 		//fmt.Printf("Node: %d | Start: %d | End: %d\n", n, n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES)
-		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock, &failedInvocations, &failLock)
+		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock, &failedInvocations, &failLock, &functionsDone, &progressLock)
 	}
 
 	//Wait for the threads to finish
