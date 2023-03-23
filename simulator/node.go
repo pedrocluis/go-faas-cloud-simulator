@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-const KEEP_ALIVE_WINDOW = 5      // Keep alive in minutes
-const MINUTES_IN_DAY = 1440 + 60 //We add one extra hour
+const KEEP_ALIVE_WINDOW = 5 // Keep alive in minutes
+const MINUTES_IN_DAY = 1440 //We add one extra hour
 
 type Node struct {
 	memory                        int
@@ -35,7 +35,7 @@ func newNode(memory int) Node {
 	n.memory = memory
 
 	//Initialize available memory per minute array
-	n.availableMemoryPerMillisecond = make([]int, minToMs(MINUTES_IN_DAY+1))
+	n.availableMemoryPerMillisecond = make([]int, minToMs(MINUTES_IN_DAY+1)+minToMs(60)) //Add one extra hour for invocations called at the end
 	n.appsInMemory = make(map[string]*ContainersInMemory)
 	for i := range n.availableMemoryPerMillisecond {
 		n.availableMemoryPerMillisecond[i] = memory
