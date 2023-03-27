@@ -1,11 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 )
 
-const KEEP_ALIVE_WINDOW = 5 // Keep alive in minutes
+const KEEP_ALIVE_WINDOW = 3 // Keep alive in minutes
 const MINUTES_IN_DAY = 1440 //We add one extra hour
 
 type Node struct {
@@ -13,6 +14,8 @@ type Node struct {
 	availableMemoryPerMillisecond []int
 	appsInMemory                  map[string]*ContainersInMemory
 	orderedContainers             []*OrderedContainers
+	currentMs                     int
+	lastMs                        int
 }
 
 type ContainersInMemory struct {
@@ -35,12 +38,14 @@ func newNode(memory int) Node {
 	n.memory = memory
 
 	//Initialize available memory per minute array
-	n.availableMemoryPerMillisecond = make([]int, minToMs(MINUTES_IN_DAY+1)+minToMs(60)) //Add one extra hour for invocations called at the end
+	n.availableMemoryPerMillisecond = make([]int, 0) //Add one extra hour for invocations called at the end
 	n.appsInMemory = make(map[string]*ContainersInMemory)
 	for i := range n.availableMemoryPerMillisecond {
 		n.availableMemoryPerMillisecond[i] = memory
 	}
 	n.orderedContainers = make([]*OrderedContainers, 0)
+	n.currentMs = 0
+	n.lastMs = 0
 	return n
 }
 
@@ -90,14 +95,35 @@ func removeOrderedContainers(ordered []*OrderedContainers, appName string) []*Or
 			break
 		}
 	}
+	if len(ordered) == idx {
+		fmt.Print("oops\n")
+	}
 	return append(ordered[:idx], ordered[idx+1:]...)
 }
 
 // Allocate memory for an app for each minute one of its functions is being used and for the keep-alive
 func allocateMemory(node *Node, app string, minute int, memory int, duration int, coldStarts *int, coldStartsLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
 
-	//Also update the ordered list
-	updateOrderedContainers(node, minToMs(minute))
+	//TEMPORARY: CONVERT minute to millisecond
+	millisecond := minToMs(minute)
+
+	//Update the availableMemoryPerMillisecond array
+	if len(node.availableMemoryPerMillisecond) < millisecond-node.currentMs {
+		node.availableMemoryPerMillisecond = make([]int, 1)
+		node.availableMemoryPerMillisecond[0] = node.memory
+		node.currentMs = millisecond
+	}
+	if node.currentMs < millisecond {
+		node.availableMemoryPerMillisecond = node.availableMemoryPerMillisecond[millisecond-node.currentMs:]
+		node.currentMs = millisecond
+	}
+
+	for ; node.lastMs < millisecond+duration+minToMs(KEEP_ALIVE_WINDOW); node.lastMs++ {
+		node.availableMemoryPerMillisecond = append(node.availableMemoryPerMillisecond, node.memory)
+	}
+
+	//Update the ordered list
+	updateOrderedContainers(node, millisecond)
 
 	// Variable to know if we caught a free container and if we did, which ms does it start at
 	caughtContainerMs := -1
@@ -107,16 +133,19 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 	if contains {
 
 		//Update the app container's list
-		updateAppContainers(node, app, minToMs(minute))
+		updateAppContainers(node, app, millisecond)
 
 		//Check if the app still exists in the hash table
 		_, containsAgain := node.appsInMemory[app]
 		if containsAgain {
-			if node.appsInMemory[app].containerStartTime[0] <= minToMs(minute) {
+			if node.appsInMemory[app].containerStartTime[0] <= millisecond {
 				caughtContainerMs = node.appsInMemory[app].containerStartTime[0]
 				// Try to reserve the memory
-				for ms := caughtContainerMs; ms < minToMs(minute)+duration; ms++ {
-					if node.availableMemoryPerMillisecond[ms] < memory {
+				for ms := caughtContainerMs; ms < millisecond+duration; ms++ {
+					if ms < node.currentMs {
+						continue
+					}
+					if node.availableMemoryPerMillisecond[ms-node.currentMs] < memory {
 						if !unloadMemory(ms, memory, node, app) {
 							caughtContainerMs = -1
 							break
@@ -131,8 +160,8 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 	if caughtContainerMs != -1 {
 		//If we enter this branch, we have already freed enough memory for the function duration
 		// We have to occupy memory enough from where the container was scheduled to end to the function end
-		for i := caughtContainerMs + minToMs(KEEP_ALIVE_WINDOW-1); i < minToMs(minute)+duration; i++ {
-			node.availableMemoryPerMillisecond[i] -= memory
+		for i := caughtContainerMs + minToMs(KEEP_ALIVE_WINDOW); i < millisecond+duration; i++ {
+			node.availableMemoryPerMillisecond[i-node.currentMs] -= memory
 		}
 		//We also have to "occupy the containers"
 		node.orderedContainers = removeOrderedContainers(node.orderedContainers, app)
@@ -144,8 +173,8 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 	} else {
 		//If it's not in memory, or we can't use a container due to memory, occupy the memory from the beginning of the function until it's end
 		//Check to see if we have available memory
-		for i := minToMs(minute); i < minToMs(minute)+duration; i++ {
-			if node.availableMemoryPerMillisecond[i] < memory {
+		for i := millisecond; i < millisecond+duration; i++ {
+			if node.availableMemoryPerMillisecond[i-node.currentMs] < memory {
 				if !unloadMemory(i, memory, node, app) {
 					// If we can't unload the necessary memory, do something
 					failLock.Lock()
@@ -155,8 +184,8 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 				}
 			}
 		}
-		for i := minToMs(minute); i < minToMs(minute)+duration; i++ {
-			node.availableMemoryPerMillisecond[i] -= memory
+		for i := millisecond; i < millisecond+duration; i++ {
+			node.availableMemoryPerMillisecond[i-node.currentMs] -= memory
 		}
 		coldStartsLock.Lock()
 		*coldStarts++
@@ -165,9 +194,9 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 
 	// Keep the app loaded in memory starting at the function's end
 	//Check to see if we can keep the container with the app loaded in a container for the keep-alive window
-	for i := minToMs(minute) + duration; i < minToMs(minute)+duration+minToMs(KEEP_ALIVE_WINDOW); i++ {
-		if node.availableMemoryPerMillisecond[i] < memory {
-			if !unloadMemory(i, memory, node, app) {
+	for i := millisecond + duration; i < millisecond+duration+minToMs(KEEP_ALIVE_WINDOW); i++ {
+		if node.availableMemoryPerMillisecond[i-node.currentMs] < memory {
+			if !unloadMemory(i, memory, node, "") {
 				// If there's a millisecond in the keep-alive where we can't find the memory, don't keep the container
 				return
 			}
@@ -176,17 +205,17 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 	_, contains = node.appsInMemory[app]
 	if !contains {
 		//If the app has never been loaded create the key for it in the map
-		newElement := ContainersInMemory{memory: memory, containerStartTime: []int{minToMs(minute) + duration}}
+		newElement := ContainersInMemory{memory: memory, containerStartTime: []int{millisecond + duration}}
 		node.appsInMemory[app] = &newElement
 	} else {
 		//Add one more free container with the app loaded (or extend)
-		node.appsInMemory[app].containerStartTime = insertOrderedApp(node.appsInMemory[app].containerStartTime, minToMs(minute)+duration)
+		node.appsInMemory[app].containerStartTime = insertOrderedApp(node.appsInMemory[app].containerStartTime, millisecond+duration)
 	}
 	//Occupy the memory for the keep-alive period
-	for i := minToMs(minute) + duration; i < minToMs(minute)+duration+minToMs(KEEP_ALIVE_WINDOW); i++ {
-		node.availableMemoryPerMillisecond[i] -= memory
+	for i := millisecond + duration; i < millisecond+duration+minToMs(KEEP_ALIVE_WINDOW); i++ {
+		node.availableMemoryPerMillisecond[i-node.currentMs] -= memory
 	}
-	node.orderedContainers = insertOrderedContainers(node.orderedContainers, &OrderedContainers{app: app, ms: minToMs(minute) + duration})
+	node.orderedContainers = insertOrderedContainers(node.orderedContainers, &OrderedContainers{app: app, ms: millisecond + duration})
 
 }
 
@@ -194,12 +223,12 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 func unloadMemory(millisecond int, memory int, node *Node, appName string) bool {
 
 	freedMemory := 0
-	var undoContainer *OrderedContainers = nil
+	var undoContainer = new(OrderedContainers)
 	sameApp := false
 	for {
 
 		if len(node.orderedContainers) == 0 {
-			if undoContainer != nil {
+			if sameApp {
 				//If we deleted the container we are going to use, put it back
 				node.orderedContainers = undoDeleteOrdered(node.orderedContainers, undoContainer)
 				_, contains := node.appsInMemory[undoContainer.app]
@@ -212,10 +241,11 @@ func unloadMemory(millisecond int, memory int, node *Node, appName string) bool 
 			return false
 		}
 		app := node.orderedContainers[0].app
-		// If the container we're looking at is for the app we're trying to make memory for, we'll have to readd it
+		updateAppContainers(node, app, node.currentMs)
+		// If the container we're looking at is for the app we're trying to make memory for, we'll have to re-add it
 		if app == appName {
 			if sameApp == false {
-				undoContainer = node.orderedContainers[0]
+				*undoContainer = *node.orderedContainers[0]
 				sameApp = true
 				node.orderedContainers = node.orderedContainers[1:]
 				node.appsInMemory[app].containerStartTime = node.appsInMemory[app].containerStartTime[1:]
@@ -231,7 +261,10 @@ func unloadMemory(millisecond int, memory int, node *Node, appName string) bool 
 		}
 		freedMemory += node.appsInMemory[app].memory
 		for i := start; i < start+KEEP_ALIVE_WINDOW; i++ {
-			node.availableMemoryPerMillisecond[i] -= node.appsInMemory[app].memory
+			if i < node.currentMs {
+				continue
+			}
+			node.availableMemoryPerMillisecond[i-node.currentMs] -= node.appsInMemory[app].memory
 		}
 		node.orderedContainers = node.orderedContainers[1:]
 		node.appsInMemory[app].containerStartTime = node.appsInMemory[app].containerStartTime[1:]
@@ -239,7 +272,7 @@ func unloadMemory(millisecond int, memory int, node *Node, appName string) bool 
 			delete(node.appsInMemory, app)
 		}
 		if freedMemory >= memory {
-			if undoContainer != nil {
+			if sameApp {
 				//If we deleted the container we're going to use, put it back
 				node.orderedContainers = undoDeleteOrdered(node.orderedContainers, undoContainer)
 				_, contains := node.appsInMemory[undoContainer.app]
@@ -255,7 +288,7 @@ func unloadMemory(millisecond int, memory int, node *Node, appName string) bool 
 }
 
 func undoDeleteOrdered(orderedContainers []*OrderedContainers, app *OrderedContainers) []*OrderedContainers {
-	var dummy *OrderedContainers
+	var dummy = new(OrderedContainers)
 	orderedContainers = append(orderedContainers, dummy)
 	copy(orderedContainers[1:], orderedContainers)
 	orderedContainers[0] = app

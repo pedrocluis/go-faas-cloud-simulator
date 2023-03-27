@@ -6,8 +6,9 @@ import (
 	"time"
 )
 
-const N_NODES = 8
-const NODE_MEMORY = 256000
+const N_NODES = 500
+const NODE_MEMORY = 32000
+const N_THREADS = 8
 
 // This function adds the average duration of a function to the invocation count structure
 func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
@@ -37,10 +38,7 @@ func addMemories(functionInvocations []functionInvocationCount, memoryUsages []a
 	return functionInvocations
 }
 
-func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, wg *sync.WaitGroup, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
-
-	// When the function is done, remove it from the wait group
-	defer wg.Done()
+func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
 
 	// Look at each minute
 	for min := 1; min <= MINUTES_IN_DAY; min++ {
@@ -59,12 +57,24 @@ func allocLoop(listInvocations []functionInvocationCount, node Node, start int, 
 				allocateMemory(&node, invocation.app, min, invocation.avgMemory, invocation.avgDuration, coldStarts, coldStartLock, failedInvocations, failLock)
 				lock.Lock()
 				*invocations++
+				if *invocations%10000000 == 0 {
+					fmt.Printf("%d\n", *invocations)
+				}
 				lock.Unlock()
 			}
 		}
 
 	}
 
+}
+
+func threadFunc(firstNode int, lastNode int, wg *sync.WaitGroup, listInvocations []functionInvocationCount, nodeList [N_NODES]Node, invocations *int, lock *sync.Mutex, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
+
+	defer wg.Done()
+
+	for n := firstNode; n < lastNode; n++ {
+		allocLoop(listInvocations, nodeList[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, invocations, lock, coldStarts, coldStartLock, failedInvocations, failLock)
+	}
 }
 
 func main() {
@@ -101,17 +111,19 @@ func main() {
 	var wg sync.WaitGroup
 
 	//Add all the threads to the wait group
-	wg.Add(N_NODES)
+	wg.Add(N_THREADS)
 	fmt.Printf("Size of the Dataset: %d\n", len(listInvocations))
 	//Create the number of nodes specified and send them to a thread
 
 	failedInvocations := 0
 	var failLock sync.Mutex
 
-	for n := 0; n < N_NODES; n++ {
-		listNodes[n] = newNode(NODE_MEMORY)
-		//fmt.Printf("Node: %d | Start: %d | End: %d\n", n, n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES)
-		go allocLoop(listInvocations, listNodes[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, &invocations, &lock, &wg, &coldStarts, &coldStartLock, &failedInvocations, &failLock)
+	for num := 0; num < N_NODES; num++ {
+		listNodes[num] = newNode(NODE_MEMORY)
+	}
+
+	for n := 0; n < N_THREADS; n++ {
+		go threadFunc(n*len(listNodes)/N_THREADS, (n+1)*len(listNodes)/N_THREADS, &wg, listInvocations, listNodes, &invocations, &lock, &coldStarts, &coldStartLock, &failedInvocations, &failLock)
 	}
 
 	//Wait for the threads to finish
