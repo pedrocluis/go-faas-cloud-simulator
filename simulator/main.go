@@ -6,9 +6,18 @@ import (
 	"time"
 )
 
-const N_NODES = 500
-const NODE_MEMORY = 32000
+const N_NODES = 1000
+const NODE_MEMORY = 500000
 const N_THREADS = 8
+const UNLOAD_POLICY = "random"
+
+type Statistics struct {
+	invocations    [N_NODES]int
+	coldStarts     [N_NODES]int
+	failed         [N_NODES]int
+	minuteProgress [MINUTES_IN_DAY + 1]int
+	minutesLock    sync.Mutex
+}
 
 // This function adds the average duration of a function to the invocation count structure
 func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
@@ -38,10 +47,12 @@ func addMemories(functionInvocations []functionInvocationCount, memoryUsages []a
 	return functionInvocations
 }
 
-func allocLoop(listInvocations []functionInvocationCount, node Node, start int, end int, invocations *int, lock *sync.Mutex, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
+func allocLoop(listInvocations []functionInvocationCount, nodeList [N_NODES]Node, firstNode, lastNode, start int, end int, stats *Statistics) {
+
+	currentNode := firstNode
 
 	// Look at each minute
-	for min := 1; min <= MINUTES_IN_DAY; min++ {
+	for min := 1; min <= 10; min++ {
 
 		// Look at the functions for this node
 		for i := start; i < end; i++ {
@@ -54,37 +65,41 @@ func allocLoop(listInvocations []functionInvocationCount, node Node, start int, 
 			// Allocate memory for this minute for each invocation
 			for invocationCount := 0; invocationCount < listInvocations[i].perMinute[min]; invocationCount++ {
 				invocation := listInvocations[i]
-				allocateMemory(&node, invocation.app, min, invocation.avgMemory, invocation.avgDuration, coldStarts, coldStartLock, failedInvocations, failLock)
-				lock.Lock()
-				*invocations++
-				if *invocations%10000000 == 0 {
-					fmt.Printf("%d\n", *invocations)
+				allocateMemory(&nodeList[currentNode], invocation.app, min, invocation.avgMemory, invocation.avgDuration, stats)
+				stats.invocations[currentNode]++
+				currentNode++
+				if currentNode == lastNode {
+					currentNode = firstNode
 				}
-				lock.Unlock()
 			}
 		}
+
+		stats.minutesLock.Lock()
+		stats.minuteProgress[min]++
+		if stats.minuteProgress[min] == N_THREADS {
+			fmt.Printf("Minute %d completed!\n", min)
+		}
+		stats.minutesLock.Unlock()
 
 	}
 
 }
 
-func threadFunc(firstNode int, lastNode int, wg *sync.WaitGroup, listInvocations []functionInvocationCount, nodeList [N_NODES]Node, invocations *int, lock *sync.Mutex, coldStarts *int, coldStartLock *sync.Mutex, failedInvocations *int, failLock *sync.Mutex) {
+func threadFunc(threadN int, firstNode int, lastNode int, wg *sync.WaitGroup, listInvocations []functionInvocationCount, nodeList [N_NODES]Node, stats *Statistics) {
 
 	defer wg.Done()
 
-	for n := firstNode; n < lastNode; n++ {
-		allocLoop(listInvocations, nodeList[n], n*len(listInvocations)/N_NODES, (n+1)*len(listInvocations)/N_NODES, invocations, lock, coldStarts, coldStartLock, failedInvocations, failLock)
-	}
+	allocLoop(listInvocations, nodeList, firstNode, lastNode, threadN*len(listInvocations)/N_THREADS, (threadN+1)*len(listInvocations)/N_THREADS, stats)
+
 }
 
 func main() {
 
-	//Cold start counter
-	coldStarts := 0
-	var coldStartLock sync.Mutex
-
 	//Measure the execution time
 	timeStart := time.Now()
+
+	//Initialize statistics struct
+	stats := new(Statistics)
 
 	//Read the csv files into structure arrays
 	fmt.Println("Reading the invocations per function file")
@@ -103,11 +118,7 @@ func main() {
 	// List of nodes
 	var listNodes [N_NODES]Node
 
-	//Initialize the invocations counter
-	invocations := 0
-
 	// Declare mutex and wait group
-	var lock sync.Mutex
 	var wg sync.WaitGroup
 
 	//Add all the threads to the wait group
@@ -115,23 +126,29 @@ func main() {
 	fmt.Printf("Size of the Dataset: %d\n", len(listInvocations))
 	//Create the number of nodes specified and send them to a thread
 
-	failedInvocations := 0
-	var failLock sync.Mutex
-
 	for num := 0; num < N_NODES; num++ {
-		listNodes[num] = newNode(NODE_MEMORY)
+		listNodes[num] = newNode(NODE_MEMORY, 0)
 	}
 
 	for n := 0; n < N_THREADS; n++ {
-		go threadFunc(n*len(listNodes)/N_THREADS, (n+1)*len(listNodes)/N_THREADS, &wg, listInvocations, listNodes, &invocations, &lock, &coldStarts, &coldStartLock, &failedInvocations, &failLock)
+		go threadFunc(n, n*len(listNodes)/N_THREADS, (n+1)*len(listNodes)/N_THREADS, &wg, listInvocations, listNodes, stats)
 	}
 
 	//Wait for the threads to finish
 	wg.Wait()
 	timeElapsed := time.Since(timeStart)
+
+	invocationsSum := 0
+	for i := range stats.invocations {
+		invocationsSum += stats.invocations[i]
+	}
+	failedInvocationsSum := 0
+	for i := range stats.failed {
+		failedInvocationsSum += stats.failed[i]
+	}
+
 	fmt.Printf("The simulation took %s\n", timeElapsed)
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
-	fmt.Printf("Invocations: %d\n", invocations)
-	fmt.Printf("Cold Starts: %d\n", coldStarts)
-	fmt.Printf("Failed Invocations %d\n", failedInvocations)
+	fmt.Printf("Invocations: %d\n", invocationsSum)
+	fmt.Printf("Failed Invocations: %d\n", failedInvocationsSum)
 }
