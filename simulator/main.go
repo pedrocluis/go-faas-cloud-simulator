@@ -6,10 +6,11 @@ import (
 	"time"
 )
 
-const N_NODES = 1000
-const NODE_MEMORY = 500000
+const N_NODES = 100
+const NODE_MEMORY = 64000
 const N_THREADS = 8
 const UNLOAD_POLICY = "random"
+const MAX_DATASET_SIZE = 1000
 
 type Statistics struct {
 	invocations    [N_NODES]int
@@ -52,7 +53,7 @@ func allocLoop(listInvocations []functionInvocationCount, nodeList [N_NODES]Node
 	currentNode := firstNode
 
 	// Look at each minute
-	for min := 1; min <= 10; min++ {
+	for min := 1; min <= MINUTES_IN_DAY; min++ {
 
 		// Look at the functions for this node
 		for i := start; i < end; i++ {
@@ -104,6 +105,10 @@ func main() {
 	//Read the csv files into structure arrays
 	fmt.Println("Reading the invocations per function file")
 	listInvocations := readInvocationCsvFile("dataset/invocations_per_function_md.anon.d01.csv")
+	//Cut the dataset
+	if MAX_DATASET_SIZE < len(listInvocations) {
+		listInvocations = listInvocations[:MAX_DATASET_SIZE]
+	}
 	fmt.Println("Reading the app memory file")
 	listMemory := readAppMemoryCsvFile("dataset/app_memory_percentiles.anon.d01.csv")
 	fmt.Println("Reading the function duration file")

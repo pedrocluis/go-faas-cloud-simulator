@@ -215,9 +215,7 @@ func allocateMemory(node *Node, app string, minute int, memory int, duration int
 		for i := millisecond; i < millisecond+duration; i++ {
 			node.availableMemoryPerMillisecond[i-node.currentMs] -= memory
 		}
-		/*coldStartsLock.Lock()
-		coldStarts++
-		coldStartsLock.Unlock()*/
+		stats.coldStarts[node.id]++
 	}
 
 	// Keep the app loaded in memory starting at the function's end
