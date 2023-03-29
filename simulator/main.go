@@ -151,9 +151,14 @@ func main() {
 	for i := range stats.failed {
 		failedInvocationsSum += stats.failed[i]
 	}
+	coldSum := 0
+	for i := range stats.coldStarts {
+		coldSum += stats.coldStarts[i]
+	}
 
 	fmt.Printf("The simulation took %s\n", timeElapsed)
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
 	fmt.Printf("Invocations: %d\n", invocationsSum)
 	fmt.Printf("Failed Invocations: %d\n", failedInvocationsSum)
+	fmt.Printf("Cold Starts: %d\n", coldSum)
 }
