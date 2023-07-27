@@ -36,8 +36,6 @@ func minToMs(minutes int) int {
 
 func updateNode(node *Node, ms int) {
 
-	node.nodeLock.Lock()
-
 	updateRAMCache(node.ramCache, ms)
 
 	i := 0
@@ -47,19 +45,19 @@ func updateNode(node *Node, ms int) {
 		} else {
 			item := node.executingFunctions[i]
 			node.runMemory += item.memory
-			insertRAMItem(node.ramCache, item.function, item.memory, item.end+minToMs(KEEP_ALIVE_WINDOW))
+			insertRAMItem(node.ramCache, item.function, item.memory, item.end)
 		}
 	}
 	node.executingFunctions = node.executingFunctions[i:]
 	node.currentMs = ms
 
-	node.nodeLock.Unlock()
-
 }
 
 func updateNodes(nodeList *[N_NODES]Node, ms int) {
 	for i := range nodeList {
+		nodeList[i].nodeLock.Lock()
 		updateNode(&nodeList[i], ms)
+		nodeList[i].nodeLock.Unlock()
 	}
 }
 
@@ -82,6 +80,8 @@ func addToExecuting(node *Node, function string, end int, memory int) {
 func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 
 	node.nodeLock.Lock()
+
+	updateNode(node, invocation.timestamp)
 
 	if node.runMemory < invocation.memory {
 		stats.failedInvocations[node.id]++

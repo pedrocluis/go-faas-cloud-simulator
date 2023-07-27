@@ -31,10 +31,6 @@ func freeCache(cache *RAMCache, memory int) int {
 		if freedMem > memory {
 			break
 		}
-		_, exists := cache.functionMap[cache.orderedFunctions[i].function]
-		if !exists {
-			println("OOPSIE")
-		}
 		freedMem += cache.functionMap[cache.orderedFunctions[i].function].memory
 		cache.functionMap[cache.orderedFunctions[i].function].copies--
 		if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {

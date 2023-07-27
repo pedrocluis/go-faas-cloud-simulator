@@ -32,11 +32,6 @@ type Invocation struct {
 	timestamp    int
 }
 
-type ThreadRange struct {
-	startNode int
-	endNode   int
-}
-
 func alloc_loop(invocations []Invocation, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, idx *int) {
 
 	//Place invocations one by one
