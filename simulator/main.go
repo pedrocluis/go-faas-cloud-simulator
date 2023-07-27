@@ -6,92 +6,89 @@ import (
 	"time"
 )
 
-const N_NODES = 100
-const NODE_MEMORY = 64000
+const N_NODES = 80
+const RUN_MEMORY = 32000
+const RAM_MEMORY = 16000
 const N_THREADS = 8
-const UNLOAD_POLICY = "random"
-const MAX_DATASET_SIZE = 1000
+const INPUT_FILE = "dataset/trace_d01_1_30.txt"
+const KEEP_ALIVE_WINDOW = 10
 
 type Statistics struct {
-	invocations    [N_NODES]int
-	coldStarts     [N_NODES]int
-	failed         [N_NODES]int
-	minuteProgress [MINUTES_IN_DAY + 1]int
-	minutesLock    sync.Mutex
+	invocations       [N_NODES]int
+	warmStarts        [N_NODES]int
+	coldStarts        [N_NODES]int
+	failedInvocations [N_NODES]int
+	totalInvocations  int
+	totalWarmStarts   int
+	totalColdStarts   int
+	totalFailed       int
 }
 
-// This function adds the average duration of a function to the invocation count structure
-func addDurations(functionInvocations []functionInvocationCount, durations []functionExecutionDuration) []functionInvocationCount {
-	for i := range functionInvocations {
-		functionInvocations[i].avgDuration = -1
-		for j := range durations {
-			if functionInvocations[i].function == durations[j].function {
-				functionInvocations[i].avgDuration = durations[j].average
-				break
-			}
+type Invocation struct {
+	hashOwner    string
+	hashFunction string
+	memory       int
+	duration     int
+	timestamp    int
+}
+
+type ThreadRange struct {
+	startNode int
+	endNode   int
+}
+
+func alloc_loop(invocations []Invocation, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, idx *int) {
+
+	//Place invocations one by one
+	for {
+		lock.Lock()
+		*idx++
+		if *idx >= len(invocations) {
+			lock.Unlock()
+			break
 		}
+		invocation := Invocation{
+			hashOwner:    invocations[*idx].hashOwner,
+			hashFunction: invocations[*idx].hashFunction,
+			memory:       invocations[*idx].memory,
+			duration:     invocations[*idx].duration,
+			timestamp:    invocations[*idx].timestamp,
+		}
+		chosenNode := findNode(nodeList, invocation.timestamp)
+		stats.invocations[chosenNode]++
+		lock.Unlock()
+		allocateInvocation(&nodeList[chosenNode], invocation, stats)
 	}
-	return functionInvocations
 }
 
-// This function adds the average memory of a function to the invocation count structure
-func addMemories(functionInvocations []functionInvocationCount, memoryUsages []appMemory) []functionInvocationCount {
-	for i := range functionInvocations {
-		functionInvocations[i].avgMemory = -1
-		for j := range memoryUsages {
-			if functionInvocations[i].app == memoryUsages[j].app {
-				functionInvocations[i].avgMemory = memoryUsages[j].average
-				break
-			}
-		}
-	}
-	return functionInvocations
-}
-
-func allocLoop(listInvocations []functionInvocationCount, nodeList [N_NODES]Node, firstNode, lastNode, start int, end int, stats *Statistics) {
-
-	currentNode := firstNode
-
-	// Look at each minute
-	for min := 1; min <= MINUTES_IN_DAY; min++ {
-
-		// Look at the functions for this node
-		for i := start; i < end; i++ {
-
-			//If the function doesn't have information about the memory or duration we skip it (don't invoke it)
-			if listInvocations[i].avgMemory == -1 || listInvocations[i].avgDuration == -1 {
-				continue
-			}
-
-			// Allocate memory for this minute for each invocation
-			for invocationCount := 0; invocationCount < listInvocations[i].perMinute[min]; invocationCount++ {
-				invocation := listInvocations[i]
-				allocateMemory(&nodeList[currentNode], invocation.app, min, invocation.avgMemory, invocation.avgDuration, stats)
-				stats.invocations[currentNode]++
-				currentNode++
-				if currentNode == lastNode {
-					currentNode = firstNode
-				}
-			}
-		}
-
-		stats.minutesLock.Lock()
-		stats.minuteProgress[min]++
-		if stats.minuteProgress[min] == N_THREADS {
-			fmt.Printf("Minute %d completed!\n", min)
-		}
-		stats.minutesLock.Unlock()
-
-	}
-
-}
-
-func threadFunc(threadN int, firstNode int, lastNode int, wg *sync.WaitGroup, listInvocations []functionInvocationCount, nodeList [N_NODES]Node, stats *Statistics) {
+func threadFunc(wg *sync.WaitGroup, invocations []Invocation, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, globalIndex *int) {
 
 	defer wg.Done()
 
-	allocLoop(listInvocations, nodeList, firstNode, lastNode, threadN*len(listInvocations)/N_THREADS, (threadN+1)*len(listInvocations)/N_THREADS, stats)
+	alloc_loop(invocations, nodeList, stats, lock, globalIndex)
 
+}
+
+func computeStats(stats *Statistics) {
+	stats.totalInvocations = 0
+	for i := range stats.invocations {
+		stats.totalInvocations += stats.invocations[i]
+	}
+
+	stats.totalWarmStarts = 0
+	for i := range stats.warmStarts {
+		stats.totalWarmStarts += stats.warmStarts[i]
+	}
+
+	stats.totalColdStarts = 0
+	for i := range stats.coldStarts {
+		stats.totalColdStarts += stats.coldStarts[i]
+	}
+
+	stats.totalFailed = 0
+	for i := range stats.coldStarts {
+		stats.totalFailed += stats.failedInvocations[i]
+	}
 }
 
 func main() {
@@ -102,63 +99,42 @@ func main() {
 	//Initialize statistics struct
 	stats := new(Statistics)
 
-	//Read the csv files into structure arrays
-	fmt.Println("Reading the invocations per function file")
-	listInvocations := readInvocationCsvFile("dataset/invocations_per_function_md.anon.d01.csv")
-	//Cut the dataset
-	if MAX_DATASET_SIZE < len(listInvocations) {
-		listInvocations = listInvocations[:MAX_DATASET_SIZE]
-	}
-	fmt.Println("Reading the app memory file")
-	listMemory := readAppMemoryCsvFile("dataset/app_memory_percentiles.anon.d01.csv")
-	fmt.Println("Reading the function duration file")
-	functionDuration := readFunctionDurationCsvFile("dataset/function_durations_percentiles.anon.d09.csv")
-
-	//Add the durations and memory to the invocation structure, so we have everything in the same array
-	fmt.Println("Joining the average durations to each function")
-	listInvocations = addDurations(listInvocations, functionDuration)
-	fmt.Println("Joining the average memory usage to each function")
-	listInvocations = addMemories(listInvocations, listMemory)
-
 	// List of nodes
 	var listNodes [N_NODES]Node
 
 	// Declare mutex and wait group
+	invocationsLock := new(sync.Mutex)
 	var wg sync.WaitGroup
 
 	//Add all the threads to the wait group
 	wg.Add(N_THREADS)
-	fmt.Printf("Size of the Dataset: %d\n", len(listInvocations))
-	//Create the number of nodes specified and send them to a thread
 
+	//Create the number of nodes specified
 	for num := 0; num < N_NODES; num++ {
-		listNodes[num] = newNode(NODE_MEMORY, 0)
+		listNodes[num] = createNode(num, RUN_MEMORY, RAM_MEMORY)
 	}
 
+	//Read input trace
+	invocations := readFile(INPUT_FILE)
+	println(len(invocations))
+
+	globalIndex := new(int)
+	*globalIndex = -1
+
 	for n := 0; n < N_THREADS; n++ {
-		go threadFunc(n, n*len(listNodes)/N_THREADS, (n+1)*len(listNodes)/N_THREADS, &wg, listInvocations, listNodes, stats)
+		go threadFunc(&wg, invocations, &listNodes, stats, invocationsLock, globalIndex)
 	}
 
 	//Wait for the threads to finish
 	wg.Wait()
 	timeElapsed := time.Since(timeStart)
 
-	invocationsSum := 0
-	for i := range stats.invocations {
-		invocationsSum += stats.invocations[i]
-	}
-	failedInvocationsSum := 0
-	for i := range stats.failed {
-		failedInvocationsSum += stats.failed[i]
-	}
-	coldSum := 0
-	for i := range stats.coldStarts {
-		coldSum += stats.coldStarts[i]
-	}
+	computeStats(stats)
 
 	fmt.Printf("The simulation took %s\n", timeElapsed)
 	fmt.Printf("Keep Alive: %d\n", KEEP_ALIVE_WINDOW)
-	fmt.Printf("Invocations: %d\n", invocationsSum)
-	fmt.Printf("Failed Invocations: %d\n", failedInvocationsSum)
-	fmt.Printf("Cold Starts: %d\n", coldSum)
+	fmt.Printf("Invocations: %d\n", stats.totalInvocations)
+	fmt.Printf("Warm Starts: %d\n", stats.totalWarmStarts)
+	fmt.Printf("Cold Starts: %d\n", stats.totalColdStarts)
+	fmt.Printf("Failed Invocations: %d\n", stats.totalFailed)
 }
