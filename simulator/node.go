@@ -53,12 +53,27 @@ func updateNode(node *Node, ms int) {
 
 }
 
-func updateNodes(nodeList *[N_NODES]Node, ms int) {
+func updateNodes(nodeList *[N_NODES]Node, ms int, stats *Statistics) {
 	for i := range nodeList {
 		nodeList[i].nodeLock.Lock()
 		updateNode(&nodeList[i], ms)
 		nodeList[i].nodeLock.Unlock()
 	}
+
+	stats.statsLock.Lock()
+	runMem := 0
+	ramMem := 0
+	if ms-stats.statsMs >= 1000 {
+		for i := range nodeList {
+			nodeList[i].nodeLock.Lock()
+			runMem += RUN_MEMORY - nodeList[i].runMemory
+			ramMem += RAM_MEMORY - nodeList[i].ramCache.memory
+			nodeList[i].nodeLock.Unlock()
+		}
+		writeStats(stats, runMem, ramMem, ms/1000)
+		stats.statsMs = ms
+	}
+	stats.statsLock.Unlock()
 }
 
 func addToExecuting(node *Node, function string, end int, memory int) {
@@ -86,6 +101,10 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 	if node.runMemory < invocation.memory {
 		stats.failedInvocations[node.id]++
 		node.nodeLock.Unlock()
+
+		stats.statsLock.Lock()
+		stats.failedInvocationsSecond++
+		stats.statsLock.Unlock()
 		return
 	}
 
@@ -95,9 +114,15 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 	//If in cache, sign the cache to remove it
 	if inCache {
 		stats.warmStarts[node.id]++
+		stats.statsLock.Lock()
+		stats.warmStartsSecond++
+		stats.statsLock.Unlock()
 		retrieveRAMCache(node.ramCache, invocation.hashFunction)
 	} else {
 		stats.coldStarts[node.id]++
+		stats.statsLock.Lock()
+		stats.coldStartsSecond++
+		stats.statsLock.Unlock()
 	}
 
 	node.runMemory -= invocation.memory
@@ -109,8 +134,8 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 
 }
 
-func findNode(nodeList *[N_NODES]Node, ms int) int {
-	updateNodes(nodeList, ms)
+func findNode(nodeList *[N_NODES]Node, ms int, stats *Statistics) int {
+	updateNodes(nodeList, ms, stats)
 	i := 0
 	chosenNode := 0
 	auxMemory := -1

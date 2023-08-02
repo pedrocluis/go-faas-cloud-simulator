@@ -8,21 +8,11 @@ import (
 
 const N_NODES = 80
 const RUN_MEMORY = 32000
-const RAM_MEMORY = 16000
+const RAM_MEMORY = 32000
 const N_THREADS = 8
 const INPUT_FILE = "dataset/trace_d01_1_30.txt"
-const KEEP_ALIVE_WINDOW = 10
-
-type Statistics struct {
-	invocations       [N_NODES]int
-	warmStarts        [N_NODES]int
-	coldStarts        [N_NODES]int
-	failedInvocations [N_NODES]int
-	totalInvocations  int
-	totalWarmStarts   int
-	totalColdStarts   int
-	totalFailed       int
-}
+const KEEP_ALIVE_WINDOW = 1
+const STAT_FILE = "stats/data.csv"
 
 type Invocation struct {
 	hashOwner    string
@@ -49,9 +39,12 @@ func alloc_loop(invocations []Invocation, nodeList *[N_NODES]Node, stats *Statis
 			duration:     invocations[*idx].duration,
 			timestamp:    invocations[*idx].timestamp,
 		}
-		chosenNode := findNode(nodeList, invocation.timestamp)
+		chosenNode := findNode(nodeList, invocation.timestamp, stats)
 		stats.invocations[chosenNode]++
 		lock.Unlock()
+		stats.statsLock.Lock()
+		stats.invocationsSecond++
+		stats.statsLock.Unlock()
 		allocateInvocation(&nodeList[chosenNode], invocation, stats)
 	}
 }
@@ -64,28 +57,6 @@ func threadFunc(wg *sync.WaitGroup, invocations []Invocation, nodeList *[N_NODES
 
 }
 
-func computeStats(stats *Statistics) {
-	stats.totalInvocations = 0
-	for i := range stats.invocations {
-		stats.totalInvocations += stats.invocations[i]
-	}
-
-	stats.totalWarmStarts = 0
-	for i := range stats.warmStarts {
-		stats.totalWarmStarts += stats.warmStarts[i]
-	}
-
-	stats.totalColdStarts = 0
-	for i := range stats.coldStarts {
-		stats.totalColdStarts += stats.coldStarts[i]
-	}
-
-	stats.totalFailed = 0
-	for i := range stats.coldStarts {
-		stats.totalFailed += stats.failedInvocations[i]
-	}
-}
-
 func main() {
 
 	//Measure the execution time
@@ -93,6 +64,7 @@ func main() {
 
 	//Initialize statistics struct
 	stats := new(Statistics)
+	createStatistics(stats, STAT_FILE)
 
 	// List of nodes
 	var listNodes [N_NODES]Node
