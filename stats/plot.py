@@ -2,6 +2,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
+# Read the file and assign the X
 data = pd.read_csv('data.csv')
 df = pd.DataFrame(data)
 
@@ -39,6 +40,15 @@ plt.bar(X, Y, color='y', width=1.0)
 plt.title("Warm Starts")
 plt.xlabel("Second")
 plt.ylabel("Number of warm invocations")
+
+plt.show()
+
+Y = list(df.iloc[:, 7])
+
+plt.bar(X, Y, color="orange", width=1.0)
+plt.title("Lukewarm starts")
+plt.xlabel("Second")
+plt.ylabel("Number of lukewarm invocations")
 
 plt.show()
 

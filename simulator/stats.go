@@ -8,20 +8,23 @@ import (
 )
 
 type Statistics struct {
-	invocations       [N_NODES]int
-	warmStarts        [N_NODES]int
-	coldStarts        [N_NODES]int
-	failedInvocations [N_NODES]int
-	totalInvocations  int
-	totalWarmStarts   int
-	totalColdStarts   int
-	totalFailed       int
+	invocations         [N_NODES]int
+	warmStarts          [N_NODES]int
+	coldStarts          [N_NODES]int
+	lukewarmStarts      [N_NODES]int
+	failedInvocations   [N_NODES]int
+	totalInvocations    int
+	totalWarmStarts     int
+	totalColdStarts     int
+	totalLukeWarmStarts int
+	totalFailed         int
 
 	avgRunMemorySecond      int
 	avgRamMemorySecond      int
 	invocationsSecond       int
 	coldStartsSecond        int
 	warmStartsSecond        int
+	lukeWarmStartsSecond    int
 	failedInvocationsSecond int
 	statsLock               *sync.Mutex
 	statsFile               string
@@ -48,14 +51,16 @@ func writeStats(stats *Statistics, runMemAvg int, ramMemAvg int, second int) {
 	if err != nil {
 		log.Println(err)
 	}
-	_, err = f.WriteString(fmt.Sprintf("%d,%d,%d,%d,%d,%d,%d\n",
+	_, err = f.WriteString(fmt.Sprintf("%d,%d,%d,%d,%d,%d,%d,%d\n",
 		second,
 		stats.invocationsSecond,
 		stats.failedInvocationsSecond,
 		stats.coldStartsSecond,
 		stats.warmStartsSecond,
 		runMemAvg,
-		ramMemAvg))
+		ramMemAvg,
+		stats.lukeWarmStartsSecond))
+
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -69,6 +74,7 @@ func writeStats(stats *Statistics, runMemAvg int, ramMemAvg int, second int) {
 	stats.failedInvocationsSecond = 0
 	stats.coldStartsSecond = 0
 	stats.warmStartsSecond = 0
+	stats.lukeWarmStartsSecond = 0
 }
 
 func computeStats(stats *Statistics) {
@@ -85,6 +91,11 @@ func computeStats(stats *Statistics) {
 	stats.totalColdStarts = 0
 	for i := range stats.coldStarts {
 		stats.totalColdStarts += stats.coldStarts[i]
+	}
+
+	stats.totalLukeWarmStarts = 0
+	for i := range stats.coldStarts {
+		stats.totalLukeWarmStarts += stats.lukewarmStarts[i]
 	}
 
 	stats.totalFailed = 0

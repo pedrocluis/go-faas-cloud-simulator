@@ -7,8 +7,9 @@ import (
 )
 
 const N_NODES = 80
-const RUN_MEMORY = 32000
-const RAM_MEMORY = 32000
+const RUN_MEMORY = 48000
+const RAM_MEMORY = 8000
+const DISK_MEMORY = 250000
 const N_THREADS = 8
 const INPUT_FILE = "dataset/trace_d01_1_30.txt"
 const KEEP_ALIVE_WINDOW = 1
@@ -103,5 +104,6 @@ func main() {
 	fmt.Printf("Invocations: %d\n", stats.totalInvocations)
 	fmt.Printf("Warm Starts: %d\n", stats.totalWarmStarts)
 	fmt.Printf("Cold Starts: %d\n", stats.totalColdStarts)
+	fmt.Printf("Lukewarm Starts: %d\n", stats.totalLukeWarmStarts)
 	fmt.Printf("Failed Invocations: %d\n", stats.totalFailed)
 }

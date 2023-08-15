@@ -11,20 +11,24 @@ type CacheItem struct {
 	end      int
 }
 
-type RAMCache struct {
+type Cache struct {
 	functionMap      map[string]*FunctionInCache
 	orderedFunctions []*CacheItem
 	memory           int
+	isRam            bool
+	destCache        *Cache
 }
 
-func createRAMCache(memory int) *RAMCache {
-	cache := new(RAMCache)
+func createCache(memory int, isRam bool, destCache *Cache) *Cache {
+	cache := new(Cache)
 	cache.functionMap = make(map[string]*FunctionInCache)
 	cache.memory = memory
+	cache.isRam = isRam
+	cache.destCache = destCache
 	return cache
 }
 
-func freeCache(cache *RAMCache, memory int) int {
+func freeCache(cache *Cache, memory int, ms int) int {
 	i := 0
 	freedMem := 0
 	for ; i < len(cache.orderedFunctions); i++ {
@@ -33,9 +37,16 @@ func freeCache(cache *RAMCache, memory int) int {
 		}
 		freedMem += cache.functionMap[cache.orderedFunctions[i].function].memory
 		cache.functionMap[cache.orderedFunctions[i].function].copies--
+
+		if cache.isRam {
+			item := cache.functionMap[cache.orderedFunctions[i].function]
+			insertCacheItem(cache.destCache, item.name, item.memory, ms)
+		}
+
 		if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
 			delete(cache.functionMap, cache.orderedFunctions[i].function)
 		}
+
 		cache.orderedFunctions[i] = nil
 	}
 	cache.orderedFunctions = cache.orderedFunctions[i:]
@@ -43,10 +54,10 @@ func freeCache(cache *RAMCache, memory int) int {
 	return freedMem
 }
 
-func insertRAMItem(cache *RAMCache, name string, memory int, start int) {
+func insertCacheItem(cache *Cache, name string, memory int, start int) {
 
 	if cache.memory < memory {
-		if freeCache(cache, memory-cache.memory) < memory-cache.memory {
+		if freeCache(cache, memory-cache.memory, start) < memory-cache.memory {
 			return
 		}
 	}
@@ -74,7 +85,7 @@ func insertRAMItem(cache *RAMCache, name string, memory int, start int) {
 	cache.memory -= memory
 }
 
-func updateRAMCache(cache *RAMCache, ms int) {
+func updateCache(cache *Cache, ms int) {
 	i := 0
 	for ; i < len(cache.orderedFunctions); i++ {
 		if cache.orderedFunctions[i].end > ms {
@@ -82,6 +93,12 @@ func updateRAMCache(cache *RAMCache, ms int) {
 		} else {
 			cache.functionMap[cache.orderedFunctions[i].function].copies--
 			cache.memory += cache.functionMap[cache.orderedFunctions[i].function].memory
+
+			if cache.isRam {
+				item := cache.functionMap[cache.orderedFunctions[i].function]
+				insertCacheItem(cache.destCache, item.name, item.memory, ms)
+			}
+
 			if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
 				delete(cache.functionMap, cache.orderedFunctions[i].function)
 			}
@@ -91,7 +108,7 @@ func updateRAMCache(cache *RAMCache, ms int) {
 	cache.orderedFunctions = cache.orderedFunctions[i:]
 }
 
-func retrieveRAMCache(cache *RAMCache, name string) {
+func retrieveCache(cache *Cache, name string) {
 	cache.functionMap[name].copies--
 	cache.memory += cache.functionMap[name].memory
 	if cache.functionMap[name].copies == 0 {
@@ -107,7 +124,7 @@ func retrieveRAMCache(cache *RAMCache, name string) {
 	cache.orderedFunctions = append(cache.orderedFunctions[:i], cache.orderedFunctions[i+1:]...)
 }
 
-func searchRAMCache(cache *RAMCache, name string) bool {
+func searchCache(cache *Cache, name string) bool {
 	_, exists := cache.functionMap[name]
 	if exists {
 		return true

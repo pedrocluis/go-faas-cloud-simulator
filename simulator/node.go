@@ -7,7 +7,8 @@ type Node struct {
 	runMemory          int
 	ramMemory          int
 	currentMs          int
-	ramCache           *RAMCache
+	ramCache           *Cache
+	diskCache          *Cache
 	executingFunctions []*ExecutingFunction
 	nodeLock           *sync.Mutex
 }
@@ -24,7 +25,8 @@ func createNode(id int, memory int, memoryRAM int) Node {
 	n.runMemory = memory
 	n.currentMs = 0
 	n.ramMemory = memoryRAM
-	n.ramCache = createRAMCache(memoryRAM)
+	n.diskCache = createCache(DISK_MEMORY, false, nil)
+	n.ramCache = createCache(memoryRAM, true, n.diskCache)
 	n.executingFunctions = make([]*ExecutingFunction, 0)
 	n.nodeLock = new(sync.Mutex)
 	return n
@@ -36,7 +38,7 @@ func minToMs(minutes int) int {
 
 func updateNode(node *Node, ms int) {
 
-	updateRAMCache(node.ramCache, ms)
+	updateCache(node.ramCache, ms)
 
 	i := 0
 	for ; i < len(node.executingFunctions); i++ {
@@ -45,7 +47,7 @@ func updateNode(node *Node, ms int) {
 		} else {
 			item := node.executingFunctions[i]
 			node.runMemory += item.memory
-			insertRAMItem(node.ramCache, item.function, item.memory, item.end)
+			insertCacheItem(node.ramCache, item.function, item.memory, item.end)
 		}
 	}
 	node.executingFunctions = node.executingFunctions[i:]
@@ -109,7 +111,7 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 	}
 
 	//Search for function in RAMcache
-	inCache := searchRAMCache(node.ramCache, invocation.hashFunction)
+	inCache := searchCache(node.ramCache, invocation.hashFunction)
 
 	//If in cache, sign the cache to remove it
 	if inCache {
@@ -117,12 +119,24 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 		stats.statsLock.Lock()
 		stats.warmStartsSecond++
 		stats.statsLock.Unlock()
-		retrieveRAMCache(node.ramCache, invocation.hashFunction)
+		retrieveCache(node.ramCache, invocation.hashFunction)
 	} else {
-		stats.coldStarts[node.id]++
-		stats.statsLock.Lock()
-		stats.coldStartsSecond++
-		stats.statsLock.Unlock()
+
+		inDisk := searchCache(node.diskCache, invocation.hashFunction)
+
+		if inDisk {
+			stats.lukewarmStarts[node.id]++
+			stats.statsLock.Lock()
+			stats.lukeWarmStartsSecond++
+			stats.statsLock.Unlock()
+			retrieveCache(node.diskCache, invocation.hashFunction)
+
+		} else {
+			stats.coldStarts[node.id]++
+			stats.statsLock.Lock()
+			stats.coldStartsSecond++
+			stats.statsLock.Unlock()
+		}
 	}
 
 	node.runMemory -= invocation.memory
