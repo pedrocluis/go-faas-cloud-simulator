@@ -11,12 +11,20 @@ type CacheItem struct {
 	end      int
 }
 
+type QueueItem struct {
+	function    string
+	memory      int
+	transferEnd int
+}
+
 type Cache struct {
 	functionMap      map[string]*FunctionInCache
 	orderedFunctions []*CacheItem
 	memory           int
 	isRam            bool
 	destCache        *Cache
+	readQueue        []*QueueItem
+	writeQueue       []*QueueItem
 }
 
 func createCache(memory int, isRam bool, destCache *Cache) *Cache {
@@ -26,6 +34,58 @@ func createCache(memory int, isRam bool, destCache *Cache) *Cache {
 	cache.isRam = isRam
 	cache.destCache = destCache
 	return cache
+}
+
+func updateReadQueue(diskCache *Cache, ms int) {
+	i := 0
+	for ; i < len(diskCache.readQueue); i++ {
+		item := diskCache.readQueue[i]
+		if item.transferEnd > ms {
+			break
+		}
+		diskCache.memory += item.memory
+	}
+	diskCache.readQueue = diskCache.readQueue[i:]
+}
+
+func updateWriteQueue(diskCache *Cache, ms int) {
+	i := 0
+	for ; i < len(diskCache.writeQueue); i++ {
+		item := diskCache.writeQueue[i]
+		if item.transferEnd > ms {
+			break
+		}
+		insertCacheItem(diskCache, item.function, item.memory, item.transferEnd)
+	}
+	diskCache.writeQueue = diskCache.writeQueue[i:]
+}
+
+func addToReadQueue(diskCache *Cache, function string, memory int, ms int) int {
+	retrieveCache(diskCache, function)
+	transfer := int(float32(memory) / props.readBandwidth)
+	queueItem := new(QueueItem)
+	queueItem.function = function
+	queueItem.memory = memory
+	if len(diskCache.readQueue) == 0 {
+		queueItem.transferEnd = ms + transfer
+	} else {
+		queueItem.transferEnd = transfer + diskCache.readQueue[len(diskCache.readQueue)-1].transferEnd
+	}
+	diskCache.readQueue = append(diskCache.readQueue, queueItem)
+	return queueItem.transferEnd - ms
+}
+
+func addToWriteQueue(diskCache *Cache, function string, memory int, ms int) {
+	transfer := int(float32(memory) / props.writeBandwidth)
+	queueItem := new(QueueItem)
+	queueItem.function = function
+	queueItem.memory = memory
+	if len(diskCache.writeQueue) == 0 {
+		queueItem.transferEnd = ms + transfer
+	} else {
+		queueItem.transferEnd = transfer + diskCache.writeQueue[len(diskCache.writeQueue)-1].transferEnd
+	}
+	diskCache.writeQueue = append(diskCache.writeQueue, queueItem)
 }
 
 func freeCache(cache *Cache, memory int, ms int) int {
@@ -40,7 +100,8 @@ func freeCache(cache *Cache, memory int, ms int) int {
 
 		if cache.isRam {
 			item := cache.functionMap[cache.orderedFunctions[i].function]
-			insertCacheItem(cache.destCache, item.name, item.memory, ms)
+			addToWriteQueue(cache.destCache, item.name, item.memory, ms)
+			//insertCacheItem(cache.destCache, item.name, item.memory, ms)
 		}
 
 		if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
@@ -78,7 +139,7 @@ func insertCacheItem(cache *Cache, name string, memory int, start int) {
 
 	//Insert in ordered list
 	newItem := new(CacheItem)
-	newItem.end = start + minToMs(KEEP_ALIVE_WINDOW)
+	newItem.end = start + minToMs(props.keepAliveWindow)
 	newItem.function = name
 	cache.orderedFunctions = append(cache.orderedFunctions, newItem)
 
@@ -86,6 +147,10 @@ func insertCacheItem(cache *Cache, name string, memory int, start int) {
 }
 
 func updateCache(cache *Cache, ms int) {
+	if !cache.isRam {
+		updateReadQueue(cache, ms)
+		updateWriteQueue(cache, ms)
+	}
 	i := 0
 	for ; i < len(cache.orderedFunctions); i++ {
 		if cache.orderedFunctions[i].end > ms {
@@ -96,7 +161,8 @@ func updateCache(cache *Cache, ms int) {
 
 			if cache.isRam {
 				item := cache.functionMap[cache.orderedFunctions[i].function]
-				insertCacheItem(cache.destCache, item.name, item.memory, ms)
+				addToWriteQueue(cache.destCache, item.name, item.memory, ms)
+				//insertCacheItem(cache.destCache, item.name, item.memory, ms)
 			}
 
 			if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
@@ -110,7 +176,9 @@ func updateCache(cache *Cache, ms int) {
 
 func retrieveCache(cache *Cache, name string) {
 	cache.functionMap[name].copies--
-	cache.memory += cache.functionMap[name].memory
+	if cache.isRam {
+		cache.memory += cache.functionMap[name].memory
+	}
 	if cache.functionMap[name].copies == 0 {
 		delete(cache.functionMap, name)
 	}

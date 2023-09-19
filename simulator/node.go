@@ -13,6 +13,14 @@ type Node struct {
 	nodeLock           *sync.Mutex
 }
 
+type Invocation struct {
+	hashOwner    string
+	hashFunction string
+	memory       int
+	duration     int
+	timestamp    int
+}
+
 type ExecutingFunction struct {
 	function string
 	memory   int
@@ -25,7 +33,7 @@ func createNode(id int, memory int, memoryRAM int) Node {
 	n.runMemory = memory
 	n.currentMs = 0
 	n.ramMemory = memoryRAM
-	n.diskCache = createCache(DISK_MEMORY, false, nil)
+	n.diskCache = createCache(props.diskMemory, false, nil)
 	n.ramCache = createCache(memoryRAM, true, n.diskCache)
 	n.executingFunctions = make([]*ExecutingFunction, 0)
 	n.nodeLock = new(sync.Mutex)
@@ -39,6 +47,7 @@ func minToMs(minutes int) int {
 func updateNode(node *Node, ms int) {
 
 	updateCache(node.ramCache, ms)
+	updateCache(node.diskCache, ms)
 
 	i := 0
 	for ; i < len(node.executingFunctions); i++ {
@@ -56,26 +65,26 @@ func updateNode(node *Node, ms int) {
 }
 
 func updateNodes(nodeList *[N_NODES]Node, ms int, stats *Statistics) {
+
 	for i := range nodeList {
 		nodeList[i].nodeLock.Lock()
 		updateNode(&nodeList[i], ms)
+
+		stats.statsLock.Lock()
+		if ms-stats.statsMs >= 1000 {
+			runMem := props.runMemory - nodeList[i].runMemory
+			diskMem := props.diskMemory - nodeList[i].diskCache.memory
+			ramMem := props.ramMemory - nodeList[i].ramCache.memory
+
+			if i == N_NODES-1 {
+				writeStats(stats, runMem, ramMem, ms/1000, diskMem)
+				stats.statsMs = ms
+			}
+		}
+		stats.statsLock.Unlock()
+
 		nodeList[i].nodeLock.Unlock()
 	}
-
-	stats.statsLock.Lock()
-	runMem := 0
-	ramMem := 0
-	if ms-stats.statsMs >= 1000 {
-		for i := range nodeList {
-			nodeList[i].nodeLock.Lock()
-			runMem += RUN_MEMORY - nodeList[i].runMemory
-			ramMem += RAM_MEMORY - nodeList[i].ramCache.memory
-			nodeList[i].nodeLock.Unlock()
-		}
-		writeStats(stats, runMem, ramMem, ms/1000)
-		stats.statsMs = ms
-	}
-	stats.statsLock.Unlock()
 }
 
 func addToExecuting(node *Node, function string, end int, memory int) {
@@ -110,6 +119,8 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 		return
 	}
 
+	latency := 0
+
 	//Search for function in RAMcache
 	inCache := searchCache(node.ramCache, invocation.hashFunction)
 
@@ -129,20 +140,28 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 			stats.statsLock.Lock()
 			stats.lukeWarmStartsSecond++
 			stats.statsLock.Unlock()
-			retrieveCache(node.diskCache, invocation.hashFunction)
+			readTime := addToReadQueue(node.diskCache, invocation.hashFunction, invocation.memory, invocation.timestamp)
+			latency = readTime
+			//retrieveCache(node.diskCache, invocation.hashFunction)
+			//latency = int(float32(invocation.memory) / props.readBandwidth)
 
 		} else {
 			stats.coldStarts[node.id]++
 			stats.statsLock.Lock()
 			stats.coldStartsSecond++
 			stats.statsLock.Unlock()
+			latency = props.coldLatency
 		}
 	}
 
 	node.runMemory -= invocation.memory
 
+	if stats.invocations[node.id]%1000 == 0 {
+		stats.latencyCdf[node.id] = append(stats.latencyCdf[node.id], latency)
+	}
+
 	//Add it to the executing functions
-	addToExecuting(node, invocation.hashFunction, invocation.timestamp+invocation.duration, invocation.memory)
+	addToExecuting(node, invocation.hashFunction, invocation.timestamp+invocation.duration+latency, invocation.memory)
 
 	node.nodeLock.Unlock()
 

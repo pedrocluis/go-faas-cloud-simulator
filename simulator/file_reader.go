@@ -63,3 +63,32 @@ func readFile(filename string) []Invocation {
 	return invocations
 
 }
+
+func readLines(csvReader *csv.Reader, isFirstLine bool) []Invocation {
+	//Read csv file line by line
+	var invocations []Invocation
+
+	for i := 0; i < MAX_INVOCATIONS; i++ {
+		var element Invocation
+		rec, err := csvReader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		if isFirstLine {
+			isFirstLine = false
+			i--
+			continue
+		}
+		//Create the object
+		element.hashOwner = rec[0]
+		element.hashFunction = rec[1]
+		element.memory = atoi(rec[2])
+		element.duration = atoi(rec[3])
+		element.timestamp = atoi(rec[4])
+		invocations = append(invocations, element)
+	}
+	return invocations
+}

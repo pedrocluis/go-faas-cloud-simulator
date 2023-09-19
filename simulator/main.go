@@ -1,29 +1,30 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 	"time"
 )
 
 const N_NODES = 80
-const RUN_MEMORY = 48000
-const RAM_MEMORY = 8000
+const RUN_MEMORY = 32000
+const RAM_MEMORY = 10000
 const DISK_MEMORY = 250000
 const N_THREADS = 8
 const INPUT_FILE = "dataset/trace_d01_1_30.txt"
-const KEEP_ALIVE_WINDOW = 1
+const KEEP_ALIVE_WINDOW = 5
 const STAT_FILE = "stats/data.csv"
+const COLD_LATENCY = 250
+const READ_BANDWIDTH = 10
+const WRITE_BANDWIDTH = 10
+const MAX_INVOCATIONS = 2000000
 
-type Invocation struct {
-	hashOwner    string
-	hashFunction string
-	memory       int
-	duration     int
-	timestamp    int
-}
+var props *Properties
 
-func alloc_loop(invocations []Invocation, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, idx *int) {
+func alloc_loop(nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, idx *int, invocations []Invocation) {
 
 	//Place invocations one by one
 	for {
@@ -50,22 +51,25 @@ func alloc_loop(invocations []Invocation, nodeList *[N_NODES]Node, stats *Statis
 	}
 }
 
-func threadFunc(wg *sync.WaitGroup, invocations []Invocation, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, globalIndex *int) {
+func threadFunc(wg *sync.WaitGroup, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, globalIndex *int, invocations []Invocation) {
 
 	defer wg.Done()
 
-	alloc_loop(invocations, nodeList, stats, lock, globalIndex)
+	alloc_loop(nodeList, stats, lock, globalIndex, invocations)
 
 }
 
 func main() {
+
+	//Read command line arguments
+	props = getProperties()
 
 	//Measure the execution time
 	timeStart := time.Now()
 
 	//Initialize statistics struct
 	stats := new(Statistics)
-	createStatistics(stats, STAT_FILE)
+	createStatistics(stats, props.statFile)
 
 	// List of nodes
 	var listNodes [N_NODES]Node
@@ -74,27 +78,54 @@ func main() {
 	invocationsLock := new(sync.Mutex)
 	var wg sync.WaitGroup
 
-	//Add all the threads to the wait group
-	wg.Add(N_THREADS)
-
 	//Create the number of nodes specified
 	for num := 0; num < N_NODES; num++ {
-		listNodes[num] = createNode(num, RUN_MEMORY, RAM_MEMORY)
+		listNodes[num] = createNode(num, props.runMemory, props.ramMemory)
 	}
 
-	//Read input trace
-	invocations := readFile(INPUT_FILE)
-	println(len(invocations))
-
-	globalIndex := new(int)
-	*globalIndex = -1
-
-	for n := 0; n < N_THREADS; n++ {
-		go threadFunc(&wg, invocations, &listNodes, stats, invocationsLock, globalIndex)
+	f, err := os.Open(props.inputFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	//Wait for the threads to finish
-	wg.Wait()
+	//When the function ends close the file
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(f)
+
+	csvReader := csv.NewReader(f)
+	isFirstLine := true
+
+	counter := 0
+
+	for {
+		//Add all the threads to the wait group
+		wg.Add(props.nThreads)
+		fmt.Printf("Invocations: %d\n", counter*MAX_INVOCATIONS)
+		invocations := readLines(csvReader, isFirstLine)
+		isFirstLine = false
+
+		globalIndex := new(int)
+		*globalIndex = -1
+
+		for n := 0; n < props.nThreads; n++ {
+			go threadFunc(&wg, &listNodes, stats, invocationsLock, globalIndex, invocations)
+		}
+
+		//Wait for the threads to finish
+		wg.Wait()
+
+		if len(invocations) < MAX_INVOCATIONS {
+			fmt.Println(len(invocations))
+			break
+		}
+		invocations = nil
+		counter++
+	}
+
 	timeElapsed := time.Since(timeStart)
 
 	computeStats(stats)
