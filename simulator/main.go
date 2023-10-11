@@ -13,18 +13,18 @@ const N_NODES = 80
 const RUN_MEMORY = 32000
 const RAM_MEMORY = 10000
 const DISK_MEMORY = 250000
-const N_THREADS = 8
+const N_THREADS = 4
 const INPUT_FILE = "dataset/trace_d01_1_30.txt"
 const KEEP_ALIVE_WINDOW = 5
-const STAT_FILE = "stats/data.csv"
+const STAT_FILE = "data.csv"
 const COLD_LATENCY = 250
 const READ_BANDWIDTH = 10
 const WRITE_BANDWIDTH = 10
-const MAX_INVOCATIONS = 2000000
+const MAX_INVOCATIONS = 1000000
 
 var props *Properties
 
-func alloc_loop(nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, idx *int, invocations []Invocation) {
+func alloc_loop(nodeList *[]Node, stats *Statistics, lock *sync.Mutex, idx *int, invocations []Invocation) {
 
 	//Place invocations one by one
 	for {
@@ -34,24 +34,25 @@ func alloc_loop(nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, id
 			lock.Unlock()
 			break
 		}
+		i := *idx
 		invocation := Invocation{
-			hashOwner:    invocations[*idx].hashOwner,
-			hashFunction: invocations[*idx].hashFunction,
-			memory:       invocations[*idx].memory,
-			duration:     invocations[*idx].duration,
-			timestamp:    invocations[*idx].timestamp,
+			hashOwner:    invocations[i].hashOwner,
+			hashFunction: invocations[i].hashFunction,
+			memory:       invocations[i].memory,
+			duration:     invocations[i].duration,
+			timestamp:    invocations[i].timestamp,
 		}
-		chosenNode := findNode(nodeList, invocation.timestamp, stats)
+		chosenNode := findNode(nodeList, invocation.timestamp, stats, invocation.hashFunction)
 		stats.invocations[chosenNode]++
 		lock.Unlock()
 		stats.statsLock.Lock()
 		stats.invocationsSecond++
 		stats.statsLock.Unlock()
-		allocateInvocation(&nodeList[chosenNode], invocation, stats)
+		allocateInvocation(&(*nodeList)[chosenNode], invocation, stats)
 	}
 }
 
-func threadFunc(wg *sync.WaitGroup, nodeList *[N_NODES]Node, stats *Statistics, lock *sync.Mutex, globalIndex *int, invocations []Invocation) {
+func threadFunc(wg *sync.WaitGroup, nodeList *[]Node, stats *Statistics, lock *sync.Mutex, globalIndex *int, invocations []Invocation) {
 
 	defer wg.Done()
 
@@ -72,14 +73,14 @@ func main() {
 	createStatistics(stats, props.statFile)
 
 	// List of nodes
-	var listNodes [N_NODES]Node
+	listNodes := make([]Node, props.nNodes)
 
 	// Declare mutex and wait group
 	invocationsLock := new(sync.Mutex)
 	var wg sync.WaitGroup
 
 	//Create the number of nodes specified
-	for num := 0; num < N_NODES; num++ {
+	for num := 0; num < props.nNodes; num++ {
 		listNodes[num] = createNode(num, props.runMemory, props.ramMemory)
 	}
 

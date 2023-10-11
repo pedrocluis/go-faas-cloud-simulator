@@ -71,6 +71,11 @@ func addToReadQueue(diskCache *Cache, function string, memory int, ms int) int {
 	} else {
 		queueItem.transferEnd = transfer + diskCache.readQueue[len(diskCache.readQueue)-1].transferEnd
 	}
+
+	if queueItem.transferEnd-ms >= 250 {
+		queueItem = nil
+		return -1
+	}
 	diskCache.readQueue = append(diskCache.readQueue, queueItem)
 	return queueItem.transferEnd - ms
 }

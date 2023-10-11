@@ -158,12 +158,12 @@ func computeStats(stats *Statistics) {
 	}
 
 	stats.totalLukeWarmStarts = 0
-	for i := range stats.coldStarts {
+	for i := range stats.lukewarmStarts {
 		stats.totalLukeWarmStarts += stats.lukewarmStarts[i]
 	}
 
 	stats.totalFailed = 0
-	for i := range stats.coldStarts {
+	for i := range stats.failedInvocations {
 		stats.totalFailed += stats.failedInvocations[i]
 	}
 

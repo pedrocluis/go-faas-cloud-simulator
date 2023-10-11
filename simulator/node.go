@@ -64,17 +64,17 @@ func updateNode(node *Node, ms int) {
 
 }
 
-func updateNodes(nodeList *[N_NODES]Node, ms int, stats *Statistics) {
+func updateNodes(nodeList *[]Node, ms int, stats *Statistics) {
 
-	for i := range nodeList {
-		nodeList[i].nodeLock.Lock()
-		updateNode(&nodeList[i], ms)
+	for i := 0; i < props.nNodes; i++ {
+		(*nodeList)[i].nodeLock.Lock()
+		updateNode(&(*nodeList)[i], ms)
 
 		stats.statsLock.Lock()
 		if ms-stats.statsMs >= 1000 {
-			runMem := props.runMemory - nodeList[i].runMemory
-			diskMem := props.diskMemory - nodeList[i].diskCache.memory
-			ramMem := props.ramMemory - nodeList[i].ramCache.memory
+			runMem := props.runMemory - (*nodeList)[i].runMemory
+			diskMem := props.diskMemory - (*nodeList)[i].diskCache.memory
+			ramMem := props.ramMemory - (*nodeList)[i].ramCache.memory
 
 			if i == N_NODES-1 {
 				writeStats(stats, runMem, ramMem, ms/1000, diskMem)
@@ -83,7 +83,7 @@ func updateNodes(nodeList *[N_NODES]Node, ms int, stats *Statistics) {
 		}
 		stats.statsLock.Unlock()
 
-		nodeList[i].nodeLock.Unlock()
+		(*nodeList)[i].nodeLock.Unlock()
 	}
 }
 
@@ -136,14 +136,20 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 		inDisk := searchCache(node.diskCache, invocation.hashFunction)
 
 		if inDisk {
-			stats.lukewarmStarts[node.id]++
-			stats.statsLock.Lock()
-			stats.lukeWarmStartsSecond++
-			stats.statsLock.Unlock()
-			readTime := addToReadQueue(node.diskCache, invocation.hashFunction, invocation.memory, invocation.timestamp)
-			latency = readTime
-			//retrieveCache(node.diskCache, invocation.hashFunction)
-			//latency = int(float32(invocation.memory) / props.readBandwidth)
+			latency = addToReadQueue(node.diskCache, invocation.hashFunction, invocation.memory, invocation.timestamp)
+
+			if latency >= 0 {
+				stats.lukewarmStarts[node.id]++
+				stats.statsLock.Lock()
+				stats.lukeWarmStartsSecond++
+				stats.statsLock.Unlock()
+			} else {
+				stats.coldStarts[node.id]++
+				stats.statsLock.Lock()
+				stats.coldStartsSecond++
+				stats.statsLock.Unlock()
+				latency = props.coldLatency
+			}
 
 		} else {
 			stats.coldStarts[node.id]++
@@ -167,7 +173,7 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 
 }
 
-func findNode(nodeList *[N_NODES]Node, ms int, stats *Statistics) int {
+/*func findNode(nodeList *[N_NODES]Node, ms int, stats *Statistics) int {
 	updateNodes(nodeList, ms, stats)
 	i := 0
 	chosenNode := 0
@@ -179,6 +185,62 @@ func findNode(nodeList *[N_NODES]Node, ms int, stats *Statistics) int {
 			chosenNode = i
 		}
 		nodeList[i].nodeLock.Unlock()
+	}
+	return chosenNode
+}*/
+
+func findNode(nodeList *[]Node, ms int, stats *Statistics, function string) int {
+	updateNodes(nodeList, ms, stats)
+	i := 0
+	chosenNode := 0
+	chosenWarm := false
+	chosenLukewarm := false
+	for ; i < props.nNodes; i++ {
+		(*nodeList)[i].nodeLock.Lock()
+
+		_, existsWarm := (*nodeList)[i].ramCache.functionMap[function]
+		if existsWarm {
+			if !chosenWarm {
+				chosenNode = i
+				chosenWarm = true
+			} else {
+				if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
+					chosenNode = i
+				}
+			}
+			(*nodeList)[i].nodeLock.Unlock()
+			continue
+		}
+
+		if chosenWarm {
+			(*nodeList)[i].nodeLock.Unlock()
+			continue
+		}
+
+		_, existsLukewarm := (*nodeList)[i].diskCache.functionMap[function]
+		if existsLukewarm {
+			if !chosenLukewarm {
+				chosenNode = i
+				chosenLukewarm = true
+			} else {
+				if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
+					chosenNode = i
+				}
+			}
+			(*nodeList)[i].nodeLock.Unlock()
+			continue
+		}
+
+		if chosenLukewarm {
+			(*nodeList)[i].nodeLock.Unlock()
+			continue
+		}
+
+		if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
+			chosenNode = i
+		}
+
+		(*nodeList)[i].nodeLock.Unlock()
 	}
 	return chosenNode
 }
