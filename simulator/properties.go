@@ -4,7 +4,6 @@ import "flag"
 
 type Properties struct {
 	nNodes          int
-	runMemory       int
 	ramMemory       int
 	diskMemory      int
 	nThreads        int
@@ -18,8 +17,7 @@ type Properties struct {
 
 func getProperties() *Properties {
 	nNodesPtr := flag.Int("nodes", -1, "Number of nodes")
-	runMemoryPtr := flag.Int("run_mem", -1, "Run memory capacity")
-	ramPtr := flag.Int("ram", -1, "RAM cache capacity")
+	ramPtr := flag.Int("ram", -1, "RAM capacity")
 	diskPtr := flag.Int("disk", -1, "Disk cache capacity")
 	threadsPtr := flag.Int("threads", -1, "Number of threads")
 	inputPtr := flag.String("input", "", "Input file")
@@ -39,14 +37,8 @@ func getProperties() *Properties {
 		props.nNodes = *nNodesPtr
 	}
 
-	if *runMemoryPtr < 0 {
-		props.runMemory = RUN_MEMORY
-	} else {
-		props.runMemory = *runMemoryPtr
-	}
-
 	if *ramPtr < 0 {
-		props.ramMemory = RAM_MEMORY
+		props.ramMemory = RAM
 	} else {
 		props.ramMemory = *ramPtr
 	}

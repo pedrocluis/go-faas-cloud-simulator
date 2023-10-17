@@ -4,7 +4,6 @@ import "sync"
 
 type Node struct {
 	id                 int
-	runMemory          int
 	ramMemory          int
 	currentMs          int
 	ramCache           *Cache
@@ -27,14 +26,13 @@ type ExecutingFunction struct {
 	end      int
 }
 
-func createNode(id int, memory int, memoryRAM int) Node {
+func createNode(id int, memoryRAM int) Node {
 	var n Node
 	n.id = id
-	n.runMemory = memory
-	n.currentMs = 0
 	n.ramMemory = memoryRAM
+	n.currentMs = 0
 	n.diskCache = createCache(props.diskMemory, false, nil)
-	n.ramCache = createCache(memoryRAM, true, n.diskCache)
+	n.ramCache = createCache(-1, true, n.diskCache)
 	n.executingFunctions = make([]*ExecutingFunction, 0)
 	n.nodeLock = new(sync.Mutex)
 	return n
@@ -46,8 +44,8 @@ func minToMs(minutes int) int {
 
 func updateNode(node *Node, ms int) {
 
-	updateCache(node.ramCache, ms)
-	updateCache(node.diskCache, ms)
+	updateCache(node, node.ramCache, ms)
+	updateCache(node, node.diskCache, ms)
 
 	i := 0
 	for ; i < len(node.executingFunctions); i++ {
@@ -55,8 +53,13 @@ func updateNode(node *Node, ms int) {
 			break
 		} else {
 			item := node.executingFunctions[i]
-			node.runMemory += item.memory
 			insertCacheItem(node.ramCache, item.function, item.memory, item.end)
+
+			//TEST REMOVE
+			if node.ramMemory+node.ramCache.occupied > props.ramMemory {
+				println("ERRO")
+				return
+			}
 		}
 	}
 	node.executingFunctions = node.executingFunctions[i:]
@@ -72,12 +75,11 @@ func updateNodes(nodeList *[]Node, ms int, stats *Statistics) {
 
 		stats.statsLock.Lock()
 		if ms-stats.statsMs >= 1000 {
-			runMem := props.runMemory - (*nodeList)[i].runMemory
-			diskMem := props.diskMemory - (*nodeList)[i].diskCache.memory
-			ramMem := props.ramMemory - (*nodeList)[i].ramCache.memory
+			diskMem := props.diskMemory - (*nodeList)[i].diskCache.diskMemory
+			ramMem := props.ramMemory - (*nodeList)[i].ramMemory
 
 			if i == N_NODES-1 {
-				writeStats(stats, runMem, ramMem, ms/1000, diskMem)
+				writeStats(stats, 0, ramMem, ms/1000, diskMem)
 				stats.statsMs = ms
 			}
 		}
@@ -109,16 +111,6 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 
 	updateNode(node, invocation.timestamp)
 
-	if node.runMemory < invocation.memory {
-		stats.failedInvocations[node.id]++
-		node.nodeLock.Unlock()
-
-		stats.statsLock.Lock()
-		stats.failedInvocationsSecond++
-		stats.statsLock.Unlock()
-		return
-	}
-
 	latency := 0
 
 	//Search for function in RAMcache
@@ -132,6 +124,19 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 		stats.statsLock.Unlock()
 		retrieveCache(node.ramCache, invocation.hashFunction)
 	} else {
+
+		if node.ramMemory < invocation.memory {
+			freedMem := freeCache(node.ramCache, invocation.memory-node.ramMemory, invocation.timestamp)
+			node.ramMemory += freedMem
+			if node.ramMemory < invocation.memory {
+				stats.failedInvocations[node.id]++
+				node.nodeLock.Unlock()
+				stats.statsLock.Lock()
+				stats.failedInvocationsSecond++
+				stats.statsLock.Unlock()
+				return
+			}
+		}
 
 		inDisk := searchCache(node.diskCache, invocation.hashFunction)
 
@@ -158,9 +163,8 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 			stats.statsLock.Unlock()
 			latency = props.coldLatency
 		}
+		node.ramMemory -= invocation.memory
 	}
-
-	node.runMemory -= invocation.memory
 
 	if stats.invocations[node.id]%1000 == 0 {
 		stats.latencyCdf[node.id] = append(stats.latencyCdf[node.id], latency)
@@ -173,23 +177,7 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 
 }
 
-/*func findNode(nodeList *[N_NODES]Node, ms int, stats *Statistics) int {
-	updateNodes(nodeList, ms, stats)
-	i := 0
-	chosenNode := 0
-	auxMemory := -1
-	for ; i < len(nodeList); i++ {
-		nodeList[i].nodeLock.Lock()
-		if nodeList[i].runMemory > auxMemory {
-			auxMemory = nodeList[i].runMemory
-			chosenNode = i
-		}
-		nodeList[i].nodeLock.Unlock()
-	}
-	return chosenNode
-}*/
-
-func findNode(nodeList *[]Node, ms int, stats *Statistics, function string) int {
+func findNode(nodeList *[]Node, ms int, stats *Statistics, function string, memory int) int {
 	updateNodes(nodeList, ms, stats)
 	i := 0
 	chosenNode := 0
@@ -204,7 +192,7 @@ func findNode(nodeList *[]Node, ms int, stats *Statistics, function string) int 
 				chosenNode = i
 				chosenWarm = true
 			} else {
-				if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
+				if (*nodeList)[i].ramMemory > (*nodeList)[chosenNode].ramMemory {
 					chosenNode = i
 				}
 			}
@@ -218,12 +206,16 @@ func findNode(nodeList *[]Node, ms int, stats *Statistics, function string) int 
 		}
 
 		_, existsLukewarm := (*nodeList)[i].diskCache.functionMap[function]
+		if (*nodeList)[i].ramMemory+(*nodeList)[i].ramCache.occupied < memory {
+			(*nodeList)[i].nodeLock.Unlock()
+			continue
+		}
 		if existsLukewarm {
 			if !chosenLukewarm {
 				chosenNode = i
 				chosenLukewarm = true
 			} else {
-				if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
+				if (*nodeList)[i].ramMemory > (*nodeList)[chosenNode].ramMemory {
 					chosenNode = i
 				}
 			}
@@ -236,8 +228,10 @@ func findNode(nodeList *[]Node, ms int, stats *Statistics, function string) int 
 			continue
 		}
 
-		if (*nodeList)[i].runMemory > (*nodeList)[chosenNode].runMemory {
-			chosenNode = i
+		if (*nodeList)[i].ramMemory+(*nodeList)[i].ramCache.occupied > memory {
+			if (*nodeList)[i].ramMemory > (*nodeList)[chosenNode].ramMemory || (*nodeList)[chosenNode].ramMemory+(*nodeList)[chosenNode].ramCache.occupied < memory {
+				chosenNode = i
+			}
 		}
 
 		(*nodeList)[i].nodeLock.Unlock()

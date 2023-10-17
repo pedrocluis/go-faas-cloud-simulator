@@ -10,10 +10,9 @@ import (
 )
 
 const N_NODES = 80
-const RUN_MEMORY = 32000
-const RAM_MEMORY = 10000
+const RAM = 32000
 const DISK_MEMORY = 250000
-const N_THREADS = 4
+const N_THREADS = 1
 const INPUT_FILE = "dataset/trace_d01_1_30.txt"
 const KEEP_ALIVE_WINDOW = 5
 const STAT_FILE = "data.csv"
@@ -42,7 +41,7 @@ func alloc_loop(nodeList *[]Node, stats *Statistics, lock *sync.Mutex, idx *int,
 			duration:     invocations[i].duration,
 			timestamp:    invocations[i].timestamp,
 		}
-		chosenNode := findNode(nodeList, invocation.timestamp, stats, invocation.hashFunction)
+		chosenNode := findNode(nodeList, invocation.timestamp, stats, invocation.hashFunction, invocation.memory)
 		stats.invocations[chosenNode]++
 		lock.Unlock()
 		stats.statsLock.Lock()
@@ -81,7 +80,7 @@ func main() {
 
 	//Create the number of nodes specified
 	for num := 0; num < props.nNodes; num++ {
-		listNodes[num] = createNode(num, props.runMemory, props.ramMemory)
+		listNodes[num] = createNode(num, props.ramMemory)
 	}
 
 	f, err := os.Open(props.inputFile)

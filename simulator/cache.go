@@ -20,19 +20,21 @@ type QueueItem struct {
 type Cache struct {
 	functionMap      map[string]*FunctionInCache
 	orderedFunctions []*CacheItem
-	memory           int
+	diskMemory       int
 	isRam            bool
+	occupied         int
 	destCache        *Cache
 	readQueue        []*QueueItem
 	writeQueue       []*QueueItem
 }
 
-func createCache(memory int, isRam bool, destCache *Cache) *Cache {
+func createCache(diskMemory int, isRam bool, destCache *Cache) *Cache {
 	cache := new(Cache)
 	cache.functionMap = make(map[string]*FunctionInCache)
-	cache.memory = memory
+	cache.diskMemory = diskMemory
 	cache.isRam = isRam
 	cache.destCache = destCache
+	cache.occupied = 0
 	return cache
 }
 
@@ -43,7 +45,7 @@ func updateReadQueue(diskCache *Cache, ms int) {
 		if item.transferEnd > ms {
 			break
 		}
-		diskCache.memory += item.memory
+		diskCache.diskMemory += item.memory
 	}
 	diskCache.readQueue = diskCache.readQueue[i:]
 }
@@ -105,6 +107,7 @@ func freeCache(cache *Cache, memory int, ms int) int {
 
 		if cache.isRam {
 			item := cache.functionMap[cache.orderedFunctions[i].function]
+			cache.occupied -= cache.functionMap[cache.orderedFunctions[i].function].memory
 			addToWriteQueue(cache.destCache, item.name, item.memory, ms)
 			//insertCacheItem(cache.destCache, item.name, item.memory, ms)
 		}
@@ -116,17 +119,23 @@ func freeCache(cache *Cache, memory int, ms int) int {
 		cache.orderedFunctions[i] = nil
 	}
 	cache.orderedFunctions = cache.orderedFunctions[i:]
-	cache.memory += freedMem
+	if !cache.isRam {
+		cache.diskMemory += freedMem
+	}
 	return freedMem
 }
 
 func insertCacheItem(cache *Cache, name string, memory int, start int) {
 
-	if cache.memory < memory {
-		if freeCache(cache, memory-cache.memory, start) < memory-cache.memory {
-			return
+	if !cache.isRam {
+		if cache.diskMemory < memory {
+			if freeCache(cache, memory-cache.diskMemory, start) < memory-cache.diskMemory {
+				return
+			}
 		}
 	}
+
+	cache.occupied += memory
 
 	//Insert in map
 	_, exists := cache.functionMap[name]
@@ -148,10 +157,12 @@ func insertCacheItem(cache *Cache, name string, memory int, start int) {
 	newItem.function = name
 	cache.orderedFunctions = append(cache.orderedFunctions, newItem)
 
-	cache.memory -= memory
+	if !cache.isRam {
+		cache.diskMemory -= memory
+	}
 }
 
-func updateCache(cache *Cache, ms int) {
+func updateCache(node *Node, cache *Cache, ms int) {
 	if !cache.isRam {
 		updateReadQueue(cache, ms)
 		updateWriteQueue(cache, ms)
@@ -162,12 +173,13 @@ func updateCache(cache *Cache, ms int) {
 			break
 		} else {
 			cache.functionMap[cache.orderedFunctions[i].function].copies--
-			cache.memory += cache.functionMap[cache.orderedFunctions[i].function].memory
-
-			if cache.isRam {
+			if !cache.isRam {
+				cache.diskMemory += cache.functionMap[cache.orderedFunctions[i].function].memory
+			} else {
+				node.ramMemory += cache.functionMap[cache.orderedFunctions[i].function].memory
+				cache.occupied -= cache.functionMap[cache.orderedFunctions[i].function].memory
 				item := cache.functionMap[cache.orderedFunctions[i].function]
 				addToWriteQueue(cache.destCache, item.name, item.memory, ms)
-				//insertCacheItem(cache.destCache, item.name, item.memory, ms)
 			}
 
 			if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
@@ -181,9 +193,7 @@ func updateCache(cache *Cache, ms int) {
 
 func retrieveCache(cache *Cache, name string) {
 	cache.functionMap[name].copies--
-	if cache.isRam {
-		cache.memory += cache.functionMap[name].memory
-	}
+	cache.occupied -= cache.functionMap[name].memory
 	if cache.functionMap[name].copies == 0 {
 		delete(cache.functionMap, name)
 	}

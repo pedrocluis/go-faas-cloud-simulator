@@ -8,11 +8,11 @@ import (
 )
 
 type Statistics struct {
-	invocations         [N_NODES]int
-	warmStarts          [N_NODES]int
-	coldStarts          [N_NODES]int
-	lukewarmStarts      [N_NODES]int
-	failedInvocations   [N_NODES]int
+	invocations         []int
+	warmStarts          []int
+	coldStarts          []int
+	lukewarmStarts      []int
+	failedInvocations   []int
 	totalInvocations    int
 	totalWarmStarts     int
 	totalColdStarts     int
@@ -30,7 +30,7 @@ type Statistics struct {
 	statsFile               string
 	statsMs                 int
 
-	latencyCdf [N_NODES][]int
+	latencyCdf [][]int
 }
 
 func createStatistics(stats *Statistics, stat_file string) {
@@ -48,6 +48,13 @@ func createStatistics(stats *Statistics, stat_file string) {
 		return
 	}
 	stats.statsFile = stat_file
+
+	stats.invocations = make([]int, props.nNodes)
+	stats.warmStarts = make([]int, props.nNodes)
+	stats.coldStarts = make([]int, props.nNodes)
+	stats.lukewarmStarts = make([]int, props.nNodes)
+	stats.failedInvocations = make([]int, props.nNodes)
+	stats.latencyCdf = make([][]int, props.nNodes)
 }
 
 func writeStats(stats *Statistics, runMemAvg int, ramMemAvg int, second int, diskMemAvg int) {
