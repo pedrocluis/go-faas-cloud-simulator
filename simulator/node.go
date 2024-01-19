@@ -10,6 +10,7 @@ type Node struct {
 	diskCache          *Cache
 	executingFunctions []*ExecutingFunction
 	nodeLock           *sync.Mutex
+	MAX_MEMORY         int
 }
 
 type Invocation struct {
@@ -30,6 +31,7 @@ func createNode(id int, memoryRAM int) Node {
 	var n Node
 	n.id = id
 	n.ramMemory = memoryRAM
+	n.MAX_MEMORY = memoryRAM
 	n.currentMs = 0
 	n.diskCache = createCache(props.diskMemory, false, nil)
 	n.ramCache = createCache(-1, true, n.diskCache)
@@ -54,12 +56,6 @@ func updateNode(node *Node, ms int) {
 		} else {
 			item := node.executingFunctions[i]
 			insertCacheItem(node.ramCache, item.function, item.memory, item.end)
-
-			//TEST REMOVE
-			if node.ramMemory+node.ramCache.occupied > props.ramMemory {
-				println("ERRO")
-				return
-			}
 		}
 	}
 	node.executingFunctions = node.executingFunctions[i:]
@@ -129,12 +125,17 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 			freedMem := freeCache(node.ramCache, invocation.memory-node.ramMemory, invocation.timestamp)
 			node.ramMemory += freedMem
 			if node.ramMemory < invocation.memory {
-				stats.failedInvocations[node.id]++
-				node.nodeLock.Unlock()
-				stats.statsLock.Lock()
-				stats.failedInvocationsSecond++
-				stats.statsLock.Unlock()
-				return
+				freed := freeBuffer(node.diskCache, invocation.memory-node.ramMemory)
+				node.ramMemory += freed
+				node.ramCache.occupied -= freed
+				if node.ramMemory < invocation.memory {
+					stats.failedInvocations[node.id]++
+					node.nodeLock.Unlock()
+					stats.statsLock.Lock()
+					stats.failedInvocationsSecond++
+					stats.statsLock.Unlock()
+					return
+				}
 			}
 		}
 
@@ -228,8 +229,8 @@ func findNode(nodeList *[]Node, ms int, stats *Statistics, function string, memo
 			continue
 		}
 
-		if (*nodeList)[i].ramMemory+(*nodeList)[i].ramCache.occupied > memory {
-			if (*nodeList)[i].ramMemory > (*nodeList)[chosenNode].ramMemory || (*nodeList)[chosenNode].ramMemory+(*nodeList)[chosenNode].ramCache.occupied < memory {
+		if (*nodeList)[i].ramMemory > memory {
+			if (*nodeList)[i].ramMemory > (*nodeList)[chosenNode].ramMemory {
 				chosenNode = i
 			}
 		}
