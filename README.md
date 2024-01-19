@@ -20,14 +20,13 @@ To run the project:
 Options:
 
 - -cold_lat int: Cold start latency (default: 250ms)
-- -disk int: Disk cache capacity (default 500000MB)
+- -disk int: Disk cache capacity (default 250000MB)
 - -input string: Input file
 - -keep_alive int: Keep alive window (default 5 minutes)
 - -nodes int: Number of nodes (default 80)
-- -ram int: RAM cache capacity (default 10000MB)
+- -ram int: RAM capacity (default 32000MB)
 - -read_speed float: Disk read bandwidth (default 10GB/s)
 - -write_speed float: Disk write bandwidth (default 10GB/s)
-- -run_mem int: Run memory capacity (default 32000MB)
 - -stats string: Stats output file
 - -threads int: Number of threads (default 4)
 
