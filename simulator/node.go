@@ -7,7 +7,7 @@ type Node struct {
 	ramMemory          int
 	currentMs          int
 	ramCache           *Cache
-	diskCache          *Cache
+	diskCache          *DiskCache
 	executingFunctions []*ExecutingFunction
 	nodeLock           *sync.Mutex
 	MAX_MEMORY         int
@@ -33,8 +33,8 @@ func createNode(id int, memoryRAM int) Node {
 	n.ramMemory = memoryRAM
 	n.MAX_MEMORY = memoryRAM
 	n.currentMs = 0
-	n.diskCache = createCache(props.diskMemory, false, nil)
-	n.ramCache = createCache(-1, true, n.diskCache)
+	n.diskCache = createDisk(props.diskMemory)
+	n.ramCache = createCache(n.diskCache)
 	n.executingFunctions = make([]*ExecutingFunction, 0)
 	n.nodeLock = new(sync.Mutex)
 	return n
@@ -47,7 +47,7 @@ func minToMs(minutes int) int {
 func updateNode(node *Node, ms int) {
 
 	updateCache(node, node.ramCache, ms)
-	updateCache(node, node.diskCache, ms)
+	updateDisk(node, node.diskCache, ms)
 
 	i := 0
 	for ; i < len(node.executingFunctions); i++ {
@@ -122,7 +122,7 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 	} else {
 
 		if node.ramMemory < invocation.memory {
-			freedMem := freeCache(node.ramCache, invocation.memory-node.ramMemory, invocation.timestamp)
+			freedMem := freeCache(node.ramCache, invocation.memory-node.ramMemory)
 			node.ramMemory += freedMem
 			if node.ramMemory < invocation.memory {
 				freed := freeBuffer(node.diskCache, invocation.memory-node.ramMemory)
@@ -139,7 +139,7 @@ func allocateInvocation(node *Node, invocation Invocation, stats *Statistics) {
 			}
 		}
 
-		inDisk := searchCache(node.diskCache, invocation.hashFunction)
+		inDisk := searchDisk(node.diskCache, invocation.hashFunction)
 
 		if inDisk {
 			latency = addToReadQueue(node.diskCache, invocation.hashFunction, invocation.memory, invocation.timestamp)

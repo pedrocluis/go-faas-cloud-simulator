@@ -20,27 +20,39 @@ type QueueItem struct {
 type Cache struct {
 	functionMap      map[string]*FunctionInCache
 	orderedFunctions []*CacheItem
-	diskMemory       int
-	isRam            bool
 	occupied         int
-	destCache        *Cache
+	destCache        *DiskCache
+	lastMs           int
+}
+type DiskCache struct {
+	functionMap      map[string]*FunctionInCache
+	orderedFunctions []*CacheItem
+	diskMemory       int
+	occupied         int
 	readQueue        []*QueueItem
 	writeQueue       []*QueueItem
 	lastMs           int
 }
 
-func createCache(diskMemory int, isRam bool, destCache *Cache) *Cache {
+func createCache(destCache *DiskCache) *Cache {
 	cache := new(Cache)
 	cache.functionMap = make(map[string]*FunctionInCache)
-	cache.diskMemory = diskMemory
-	cache.isRam = isRam
 	cache.destCache = destCache
 	cache.occupied = 0
 	cache.lastMs = 0
 	return cache
 }
 
-func updateReadQueue(diskCache *Cache, ms int) {
+func createDisk(diskMemory int) *DiskCache {
+	diskCache := new(DiskCache)
+	diskCache.functionMap = make(map[string]*FunctionInCache)
+	diskCache.diskMemory = diskMemory
+	diskCache.occupied = 0
+	diskCache.lastMs = 0
+	return diskCache
+}
+
+func updateReadQueue(diskCache *DiskCache, ms int) {
 	i := 0
 	for ; i < len(diskCache.readQueue); i++ {
 		item := diskCache.readQueue[i]
@@ -52,21 +64,20 @@ func updateReadQueue(diskCache *Cache, ms int) {
 	diskCache.readQueue = diskCache.readQueue[i:]
 }
 
-func updateWriteQueue(diskCache *Cache, ms int, node *Node) {
+func updateWriteQueue(diskCache *DiskCache, ms int, node *Node) {
 	i := 0
 	for ; i < len(diskCache.writeQueue); i++ {
 		item := diskCache.writeQueue[i]
 		if item.transferEnd > ms {
 			break
 		}
-		insertCacheItem(diskCache, item.function, item.memory, item.transferEnd)
+		insertDiskItem(diskCache, item.function, item.memory, item.transferEnd)
 		node.ramMemory += item.memory
 	}
 	diskCache.writeQueue = diskCache.writeQueue[i:]
 }
 
-func addToReadQueue(diskCache *Cache, function string, memory int, ms int) int {
-	retrieveCache(diskCache, function)
+func addToReadQueue(diskCache *DiskCache, function string, memory int, ms int) int {
 	transfer := int(float32(memory) / props.readBandwidth)
 	queueItem := new(QueueItem)
 	queueItem.function = function
@@ -85,7 +96,12 @@ func addToReadQueue(diskCache *Cache, function string, memory int, ms int) int {
 	return queueItem.transferEnd - ms
 }
 
-func addToWriteQueue(diskCache *Cache, function string, memory int, ms int) {
+func addToWriteQueue(diskCache *DiskCache, function string, memory int, ms int) {
+
+	if searchDisk(diskCache, function) == true {
+		return
+	}
+
 	transfer := int(float32(memory) / props.writeBandwidth)
 	queueItem := new(QueueItem)
 	queueItem.function = function
@@ -98,7 +114,7 @@ func addToWriteQueue(diskCache *Cache, function string, memory int, ms int) {
 	diskCache.writeQueue = append(diskCache.writeQueue, queueItem)
 }
 
-func freeCache(cache *Cache, memory int, ms int) int {
+func freeCache(cache *Cache, memory int) int {
 	i := 0
 	freedMem := 0
 	for ; i < len(cache.orderedFunctions); i++ {
@@ -115,23 +131,27 @@ func freeCache(cache *Cache, memory int, ms int) int {
 		cache.orderedFunctions[i] = nil
 	}
 	cache.orderedFunctions = cache.orderedFunctions[i:]
-	if !cache.isRam {
-		cache.diskMemory += freedMem
-	} else {
-		cache.occupied -= freedMem
+	cache.occupied -= freedMem
+	return freedMem
+}
+
+func freeDiskCache(cache *DiskCache, memory int) int {
+	i := 0
+	freedMem := 0
+	for ; i < len(cache.orderedFunctions); i++ {
+		if freedMem > memory {
+			break
+		}
+		freedMem += cache.functionMap[cache.orderedFunctions[i].function].memory
+		delete(cache.functionMap, cache.orderedFunctions[i].function)
+		cache.orderedFunctions[i] = nil
 	}
+	cache.orderedFunctions = cache.orderedFunctions[i:]
+	cache.diskMemory += freedMem
 	return freedMem
 }
 
 func insertCacheItem(cache *Cache, name string, memory int, start int) {
-
-	if !cache.isRam {
-		if cache.diskMemory < memory {
-			if freeCache(cache, memory-cache.diskMemory, start) < memory-cache.diskMemory {
-				return
-			}
-		}
-	}
 
 	cache.occupied += memory
 
@@ -154,61 +174,86 @@ func insertCacheItem(cache *Cache, name string, memory int, start int) {
 	newItem.end = start + minToMs(props.keepAliveWindow)
 	newItem.function = name
 	cache.orderedFunctions = append(cache.orderedFunctions, newItem)
-
-	if !cache.isRam {
-		cache.diskMemory -= memory
-	}
 }
 
-func freeBuffer(cache *Cache, memory int) int {
+func insertDiskItem(diskCache *DiskCache, name string, memory int, start int) {
+
+	if diskCache.diskMemory < memory {
+		if freeDiskCache(diskCache, memory-diskCache.diskMemory) < memory-diskCache.diskMemory {
+			return
+		}
+	}
+
+	diskCache.occupied += memory
+
+	//Insert in map
+	_, exists := diskCache.functionMap[name]
+
+	if exists {
+		return
+
+	} else {
+		newFunction := new(FunctionInCache)
+		newFunction.name = name
+		newFunction.memory = memory
+		newFunction.copies = 1
+		diskCache.functionMap[name] = newFunction
+	}
+
+	//Insert in ordered list
+	newItem := new(CacheItem)
+	newItem.end = start + minToMs(props.keepAliveWindow)
+	newItem.function = name
+	diskCache.orderedFunctions = append(diskCache.orderedFunctions, newItem)
+
+	diskCache.diskMemory -= memory
+}
+
+func freeBuffer(diskCache *DiskCache, memory int) int {
 	i := 0
 	freedMem := 0
-	for ; i < len(cache.writeQueue); i++ {
+	for ; i < len(diskCache.writeQueue); i++ {
 		if freedMem > memory {
 			break
 		}
-		freedMem += cache.writeQueue[i].memory
-		cache.writeQueue[i] = nil
+		freedMem += diskCache.writeQueue[i].memory
+		diskCache.writeQueue[i] = nil
 	}
-	cache.writeQueue = cache.writeQueue[i:]
+	diskCache.writeQueue = diskCache.writeQueue[i:]
 
 	return freedMem
 }
 
 func updateCache(node *Node, cache *Cache, ms int) {
 
-	if cache.isRam {
+	for cache.lastMs < ms-100 {
 
-		for cache.lastMs < ms-100 {
-
-			if float32(cache.occupied)/float32(node.MAX_MEMORY) > 0.5 {
-				i := 0
-				tempMem := cache.occupied
-				for ; i < len(cache.orderedFunctions); i++ {
-					if float32(tempMem)/float32(node.MAX_MEMORY) <= 0.5 {
-						break
-					}
-					cache.functionMap[cache.orderedFunctions[i].function].copies--
-					item := cache.functionMap[cache.orderedFunctions[i].function]
-					addToWriteQueue(cache.destCache, item.name, item.memory, ms)
-					node.ramCache.occupied -= item.memory
-					tempMem -= cache.functionMap[cache.orderedFunctions[i].function].memory
-					if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
-						delete(cache.functionMap, cache.orderedFunctions[i].function)
-					}
-					cache.orderedFunctions[i] = nil
+		if float32(cache.occupied)/float32(node.MAX_MEMORY) > 0.5 {
+			i := 0
+			tempMem := cache.occupied
+			for ; i < len(cache.orderedFunctions); i++ {
+				if float32(tempMem)/float32(node.MAX_MEMORY) <= 0.5 {
+					break
 				}
-				cache.orderedFunctions = cache.orderedFunctions[i:]
+				cache.functionMap[cache.orderedFunctions[i].function].copies--
+				item := cache.functionMap[cache.orderedFunctions[i].function]
+				addToWriteQueue(cache.destCache, item.name, item.memory, ms)
+				node.ramCache.occupied -= item.memory
+				tempMem -= cache.functionMap[cache.orderedFunctions[i].function].memory
+				if cache.functionMap[cache.orderedFunctions[i].function].copies == 0 {
+					delete(cache.functionMap, cache.orderedFunctions[i].function)
+				}
+				cache.orderedFunctions[i] = nil
 			}
-			cache.lastMs = cache.lastMs + 100
+			cache.orderedFunctions = cache.orderedFunctions[i:]
 		}
-
+		cache.lastMs = cache.lastMs + 100
 	}
+}
 
-	if !cache.isRam {
-		updateReadQueue(cache, ms)
-		updateWriteQueue(cache, ms, node)
-	}
+func updateDisk(node *Node, diskCache *DiskCache, ms int) {
+	updateReadQueue(diskCache, ms)
+	updateWriteQueue(diskCache, ms, node)
 }
 
 func retrieveCache(cache *Cache, name string) {
@@ -229,6 +274,14 @@ func retrieveCache(cache *Cache, name string) {
 
 func searchCache(cache *Cache, name string) bool {
 	_, exists := cache.functionMap[name]
+	if exists {
+		return true
+	}
+	return false
+}
+
+func searchDisk(diskCache *DiskCache, name string) bool {
+	_, exists := diskCache.functionMap[name]
 	if exists {
 		return true
 	}
